@@ -58,8 +58,7 @@ fun NavigationGraph(navController: NavHostController, modifier: Modifier) {
         }
 
         composable(BottomNavItem.ImageTools.route) {
-            // Placeholder until we build the Image Studio
-            Text("Image Studio", modifier = Modifier.padding(16.dp))
+            StudioScreen()
         }
     }
 }
