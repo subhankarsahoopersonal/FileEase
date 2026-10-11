@@ -54,7 +54,7 @@ fun NavigationGraph(navController: NavHostController, modifier: Modifier) {
         }
 
         composable(BottomNavItem.PdfTools.route) {
-            PdfMergeScreen()
+            PdfToolsScreen()
         }
 
         composable(BottomNavItem.ImageTools.route) {
