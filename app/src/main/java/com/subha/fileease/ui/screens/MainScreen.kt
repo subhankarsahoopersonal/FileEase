@@ -50,8 +50,7 @@ fun NavigationGraph(navController: NavHostController, modifier: Modifier) {
         }
 
         composable(BottomNavItem.Files.route) {
-            // Placeholder until we build the File Manager
-            Text("File Manager", modifier = Modifier.padding(16.dp))
+            FileManagerScreen()
         }
 
         composable(BottomNavItem.PdfTools.route) {
