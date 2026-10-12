@@ -54,7 +54,16 @@ fun NavigationGraph(navController: NavHostController, modifier: Modifier) {
         }
 
         composable(BottomNavItem.PdfTools.route) {
-            PdfToolsScreen()
+            PdfToolsScreen(
+                onMergeClick = { navController.navigate("pdf_merge") }
+            )
+        }
+
+        // This creates the new hidden route for your Merge tool
+        composable("pdf_merge") {
+            PdfMergeScreen(
+                onNavigateBack = { navController.popBackStack() } // Makes the back button work!
+            )
         }
 
         composable(BottomNavItem.ImageTools.route) {

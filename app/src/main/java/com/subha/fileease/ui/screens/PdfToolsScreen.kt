@@ -33,7 +33,7 @@ data class PdfTool(
 )
 
 @Composable
-fun PdfToolsScreen() {
+fun PdfToolsScreen(onMergeClick: () -> Unit) {
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
@@ -119,9 +119,13 @@ fun PdfToolsScreen() {
                     PdfToolCard(
                         tool = tool,
                         onClick = {
-                            // Triggers the toast notification just like the JS function in HTML
-                            coroutineScope.launch {
-                                snackbarHostState.showSnackbar(message = "${tool.title} selected")
+                            if (tool.title == "Merge PDF") {
+                                onMergeClick() // Triggers navigation!
+                            } else {
+                                // Shows the toast for the other tools
+                                coroutineScope.launch {
+                                    snackbarHostState.showSnackbar(message = "${tool.title} selected")
+                                }
                             }
                         }
                     )
