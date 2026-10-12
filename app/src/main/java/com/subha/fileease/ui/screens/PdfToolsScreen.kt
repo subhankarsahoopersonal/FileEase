@@ -33,7 +33,7 @@ data class PdfTool(
 )
 
 @Composable
-fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit) {
+fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit, onCompressClick: () -> Unit) {
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
@@ -123,6 +123,8 @@ fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit) {
                                 onMergeClick()
                             } else if (tool.title == "Split PDF") {
                                 onSplitClick() // Trigger the split navigation safely
+                            } else if (tool.title == "Compress PDF") {
+                                onCompressClick()
                             } else {
                                 coroutineScope.launch {
                                     snackbarHostState.showSnackbar(message = "${tool.title} selected")

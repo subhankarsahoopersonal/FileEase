@@ -163,7 +163,7 @@ private fun SplitTopBar(onNavigateBack: () -> Unit) {
             }
             Spacer(modifier = Modifier.width(4.dp))
             Column {
-                Text("Pdf Compressor", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface) // Kept text exactly as HTML
+                Text("Split Pdf", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface) // Kept text exactly as HTML
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Primary))
                     Spacer(modifier = Modifier.width(6.dp))
