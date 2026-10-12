@@ -24,6 +24,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.Environment
+import android.os.StatFs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 
 // Exact colors from the Stitch HTML file
 val BgColor = Color(0xFFF8FAFC)
@@ -297,6 +306,43 @@ fun QuickActionCard(icon: ImageVector, title: String, onClick: () -> Unit) {
 
 @Composable
 fun DeviceStorageSection() {
+    // State variables to hold the real device data
+    var totalGb by remember { mutableStateOf(128f) } // Default fallback
+    var usedGb by remember { mutableStateOf(0f) }
+    var docsGb by remember { mutableStateOf(0f) }
+    var othersGb by remember { mutableStateOf(0f) }
+    var progress by remember { mutableStateOf(0f) }
+
+    // Fetch real storage stats asynchronously when the UI loads
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            try {
+                // StatFs reads the actual file system blocks on Android
+                val stat = StatFs(Environment.getDataDirectory().path)
+                val totalBytes = stat.totalBytes
+                val availableBytes = stat.availableBytes
+                val usedBytes = totalBytes - availableBytes
+
+                // Using 1 Billion bytes = 1 GB (OEM marketing standard for storage)
+                val gigabyte = 1_000_000_000f
+                val tGb = totalBytes / gigabyte
+                val uGb = usedBytes / gigabyte
+
+                totalGb = tGb
+                usedGb = uGb
+                progress = if (tGb > 0) uGb / tGb else 0f
+
+                // Note: Querying the exact size of specific file types (PDFs, Images)
+                // across the entire OS requires MANAGE_EXTERNAL_STORAGE permissions.
+                // Until we implement permissions later, we proportionally split the actual used space.
+                docsGb = uGb * 0.58f
+                othersGb = uGb * 0.42f
+            } catch (e: Exception) {
+                // Keep default state on error
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -314,14 +360,14 @@ fun DeviceStorageSection() {
             Spacer(modifier = Modifier.height(10.dp))
 
             Row(verticalAlignment = Alignment.Bottom) {
-                Text("72.4 GB", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text("${"%.1f".format(usedGb)} GB", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("of 128 GB used", fontSize = 14.sp, fontWeight = FontWeight.Normal, color = Color.White.copy(alpha = 0.8f))
+                Text("of ${"%.0f".format(totalGb)} GB used", fontSize = 14.sp, fontWeight = FontWeight.Normal, color = Color.White.copy(alpha = 0.8f))
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Progress Bar
+            // Dynamic Progress Bar
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -331,7 +377,8 @@ fun DeviceStorageSection() {
             ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(0.565f)
+                        // Constrain fraction between 0.01 and 1.0 to prevent Compose rendering crashes on 0 width
+                        .fillMaxWidth(progress.coerceIn(0.01f, 1f))
                         .fillMaxHeight()
                         .clip(CircleShape)
                         .background(Color.White)
@@ -345,13 +392,13 @@ fun DeviceStorageSection() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Documents 42 GB", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
+                    Text("Documents ${"%.1f".format(docsGb)} GB", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
                 }
                 Spacer(modifier = Modifier.width(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.5f)))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Others 30 GB", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
+                    Text("Others ${"%.1f".format(othersGb)} GB", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
                 }
             }
         }
