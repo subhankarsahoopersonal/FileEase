@@ -46,7 +46,15 @@ fun NavigationGraph(navController: NavHostController, modifier: Modifier) {
     NavHost(navController = navController, startDestination = BottomNavItem.Home.route, modifier = modifier) {
 
         composable(BottomNavItem.Home.route) {
-            HomeDashboardScreen()
+            HomeDashboardScreen(
+                onMergeClick = { navController.navigate("pdf_merge") },
+                onSplitClick = { navController.navigate("pdf_split") },
+                onCompressClick = { navController.navigate("pdf_compress") },
+                // Since 'Images to PDF' is part of Studio, we navigate to the Studio tab
+                onImagesToPdfClick = { navController.navigate(BottomNavItem.ImageTools.route) },
+                // 'View all' takes the user to the main PDF tools grid
+                onViewAllClick = { navController.navigate(BottomNavItem.PdfTools.route) }
+            )
         }
 
         composable(BottomNavItem.Files.route) {
@@ -129,22 +137,25 @@ fun BottomNavigationBar(navController: NavHostController) {
                 label = { Text(text = item.title) },
                 selected = currentRoute == item.route,
                 onClick = {
-                    navController.navigate(item.route) {
-                        // Pop up to the start destination of the graph to avoid building up a large stack of destinations
-                        navController.graph.startDestinationRoute?.let { route ->
-                            popUpTo(route) { saveState = true }
+                    // Only navigate if we aren't already exactly on this tab's root
+                    if (currentRoute != item.route) {
+                        navController.navigate(item.route) {
+                            navController.graph.startDestinationRoute?.let { route ->
+                                popUpTo(route) { saveState = true }
+                            }
+                            launchSingleTop = true
+
+                            // THE FIX: If the user taps the Home tab, don't restore deep links.
+                            // This ensures it strictly drops them on the clean HomeDashboardScreen.
+                            restoreState = item.route != BottomNavItem.Home.route
                         }
-                        // Avoid multiple copies of the same destination
-                        launchSingleTop = true
-                        // Restore state when reselecting a previously selected item
-                        restoreState = true
                     }
                 },
                 colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = Color(0xFF0066FF), // Primary Blue
+                    selectedIconColor = Color(0xFF0066FF),
                     selectedTextColor = Color(0xFF0066FF),
-                    indicatorColor = Color(0xFFEFF6FF), // Blue 50
-                    unselectedIconColor = Color(0xFF94A3B8), // Muted Gray
+                    indicatorColor = Color(0xFFEFF6FF),
+                    unselectedIconColor = Color(0xFF94A3B8),
                     unselectedTextColor = Color(0xFF94A3B8)
                 )
             )

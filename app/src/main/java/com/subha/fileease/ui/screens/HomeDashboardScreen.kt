@@ -19,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -39,7 +40,14 @@ val Emerald500 = Color(0xFF10B981)
 val Emerald50 = Color(0xFFECFDF5)
 
 @Composable
-fun HomeDashboardScreen() {
+fun HomeDashboardScreen(
+    // Added navigation callbacks to make the dashboard functional
+    onMergeClick: () -> Unit = {},
+    onSplitClick: () -> Unit = {},
+    onCompressClick: () -> Unit = {},
+    onImagesToPdfClick: () -> Unit = {},
+    onViewAllClick: () -> Unit = {}
+) {
     Scaffold(
         topBar = { DashboardTopBar() },
         containerColor = BgColor
@@ -55,7 +63,13 @@ fun HomeDashboardScreen() {
             GreetingSection()
 
             Spacer(modifier = Modifier.height(24.dp))
-            QuickActionsSection()
+            QuickActionsSection(
+                onMergeClick = onMergeClick,
+                onSplitClick = onSplitClick,
+                onCompressClick = onCompressClick,
+                onImagesToPdfClick = onImagesToPdfClick,
+                onViewAllClick = onViewAllClick
+            )
 
             Spacer(modifier = Modifier.height(24.dp))
             DeviceStorageSection()
@@ -169,7 +183,13 @@ fun GreetingSection() {
 }
 
 @Composable
-fun QuickActionsSection() {
+fun QuickActionsSection(
+    onMergeClick: () -> Unit,
+    onSplitClick: () -> Unit,
+    onCompressClick: () -> Unit,
+    onImagesToPdfClick: () -> Unit,
+    onViewAllClick: () -> Unit
+) {
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -182,7 +202,14 @@ fun QuickActionsSection() {
                 fontWeight = FontWeight.Bold,
                 color = TextPrimary
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Added clickable to "View all"
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable { onViewAllClick() }
+                    .padding(4.dp)
+            ) {
                 Text(
                     text = "View all",
                     fontSize = 12.sp,
@@ -206,7 +233,7 @@ fun QuickActionsSection() {
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // 1. Images to PDF (Active)
+            // 1. Images to PDF (Active) - Added onClick callback
             Column(
                 modifier = Modifier
                     .width(84.dp)
@@ -214,7 +241,7 @@ fun QuickActionsSection() {
                     .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = PrimaryBlue)
                     .clip(RoundedCornerShape(16.dp))
                     .background(PrimaryBlue)
-                    .clickable { }
+                    .clickable { onImagesToPdfClick() }
                     .padding(10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
@@ -229,18 +256,19 @@ fun QuickActionsSection() {
                 Text("Images to PDF", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1)
             }
 
-            // 2. Merge PDF
-            QuickActionCard(icon = Icons.Outlined.Layers, title = "Merge PDF")
-            // 3. Split PDF (Using ContentCut as equivalent)
-            QuickActionCard(icon = Icons.Outlined.ContentCut, title = "Split PDF")
-            // 4. Compress PDF (Using ZoomInMap as equivalent)
-            QuickActionCard(icon = Icons.Outlined.ZoomInMap, title = "Compress")
+            // 2. Merge PDF - Passed the new onClick callback
+            QuickActionCard(icon = Icons.Outlined.Layers, title = "Merge PDF", onClick = onMergeClick)
+            // 3. Split PDF
+            QuickActionCard(icon = Icons.Outlined.ContentCut, title = "Split PDF", onClick = onSplitClick)
+            // 4. Compress PDF
+            QuickActionCard(icon = Icons.Outlined.ZoomInMap, title = "Compress", onClick = onCompressClick)
         }
     }
 }
 
+// Added onClick parameter to individual cards
 @Composable
-fun QuickActionCard(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String) {
+fun QuickActionCard(icon: ImageVector, title: String, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .width(84.dp)
@@ -248,7 +276,7 @@ fun QuickActionCard(icon: androidx.compose.ui.graphics.vector.ImageVector, title
             .border(1.dp, Slate100, RoundedCornerShape(16.dp))
             .clip(RoundedCornerShape(16.dp))
             .background(SurfaceColor)
-            .clickable { }
+            .clickable { onClick() }
             .padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -393,7 +421,7 @@ fun RecentActivitySection() {
 
 @Composable
 fun ActivityItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     iconBgColor: Color,
     iconColor: Color,
     title: String,
