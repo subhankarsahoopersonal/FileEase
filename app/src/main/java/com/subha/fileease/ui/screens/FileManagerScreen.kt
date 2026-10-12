@@ -78,14 +78,40 @@ fun FileManagerScreen() {
 
     var searchQuery by remember { mutableStateOf("") }
     var globalSearchResults by remember { mutableStateOf<List<File>>(emptyList()) }
-    var isSearching by remember { mutableStateOf(false) }
 
+    var isSearching by remember { mutableStateOf(false) }
+    var isTransitioning by remember { mutableStateOf(true) } // Hides the visual jump
+
+    // Scroll State & Memory Map
     val listState = rememberLazyListState()
+    val scrollPositions = remember { mutableMapOf<String, Pair<Int, Int>>() }
+
+    // --- SMART NAVIGATION HELPER ---
+    val changeDirectory = { newDir: File ->
+        // 1. Save scroll position of the current folder before leaving
+        scrollPositions[currentDir.absolutePath] = Pair(
+            listState.firstVisibleItemIndex,
+            listState.firstVisibleItemScrollOffset
+        )
+
+        // 2. Check Direction: Are we drilling down (Forward) or going up (Back)?
+        val isForwardNavigation = newDir.absolutePath.startsWith(currentDir.absolutePath) &&
+                newDir.absolutePath.length > currentDir.absolutePath.length
+
+        // 3. If going forward, intentionally delete any old memory for the new folder
+        if (isForwardNavigation) {
+            scrollPositions.remove(newDir.absolutePath)
+        }
+
+        // 4. Trigger the loading overlay instantly to hide the UI swap
+        isTransitioning = true
+        currentDir = newDir
+        searchQuery = ""
+    }
 
     // Handle physical back button to navigate up folders
     BackHandler(enabled = currentDir.absolutePath != rootPath.absolutePath) {
-        currentDir = currentDir.parentFile ?: rootPath
-        searchQuery = ""
+        changeDirectory(currentDir.parentFile ?: rootPath)
     }
 
     // Permission State
@@ -99,9 +125,7 @@ fun FileManagerScreen() {
         )
     }
 
-    val settingsLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) {
+    val settingsLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.StartActivityForResult()) {
         hasStoragePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
         } else {
@@ -109,17 +133,16 @@ fun FileManagerScreen() {
         }
     }
 
-    val legacyLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted -> hasStoragePermission = isGranted }
+    val legacyLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) {
+            isGranted -> hasStoragePermission = isGranted
+    }
 
     val requestPermission = {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                settingsLauncher.launch(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
                     data = Uri.parse("package:${context.packageName}")
-                }
-                settingsLauncher.launch(intent)
+                })
             } catch (e: Exception) {
                 settingsLauncher.launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
             }
@@ -128,39 +151,68 @@ fun FileManagerScreen() {
         }
     }
 
-    // 1. Load current directory files
+    // 1. Load current directory files & restore scroll safely
     LaunchedEffect(currentDir, hasStoragePermission) {
         if (hasStoragePermission) {
-            withContext(Dispatchers.IO) {
+            val newFiles = withContext(Dispatchers.IO) {
                 try {
                     val allFiles = currentDir.listFiles()?.toList() ?: emptyList()
-                    filesList = allFiles.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+                    allFiles.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
                 } catch (e: Exception) {
-                    filesList = emptyList()
+                    emptyList()
                 }
             }
+            filesList = newFiles
+
+            if (searchQuery.isBlank()) {
+                // Give Compose exactly 50ms to calculate layout heights before applying the scroll
+                delay(50)
+
+                val savedScroll = scrollPositions[currentDir.absolutePath]
+                if (savedScroll != null && savedScroll.first < newFiles.size) {
+                    listState.scrollToItem(savedScroll.first, savedScroll.second)
+                } else {
+                    listState.scrollToItem(0)
+                }
+            }
+
+            isTransitioning = false // Reveal the perfectly scrolled list
+        } else {
+            isTransitioning = false
         }
     }
 
     // 2. Perform Global Device Search when typing
-    LaunchedEffect(searchQuery, currentDir, hasStoragePermission) {
+    LaunchedEffect(searchQuery, hasStoragePermission) {
         if (searchQuery.isNotBlank() && hasStoragePermission) {
             isSearching = true
             delay(300)
 
-            withContext(Dispatchers.IO) {
-                globalSearchResults = searchFilesGlobally(context, searchQuery, currentDir)
+            val results = withContext(Dispatchers.IO) {
+                searchFilesGlobally(context, searchQuery, currentDir)
             }
+            globalSearchResults = results
+
+            delay(50)
+            listState.scrollToItem(0) // Always snap to top for fresh search results
             isSearching = false
         } else {
             globalSearchResults = emptyList()
             isSearching = false
-        }
-    }
 
-    // Instantly snap to the top when the folder or search changes
-    LaunchedEffect(currentDir, searchQuery) {
-        listState.scrollToItem(0)
+            // If they clear the search text, smoothly return to the folder's saved scroll position
+            if (searchQuery.isBlank() && !isTransitioning) {
+                isTransitioning = true // Cover the UI while we reset
+                delay(50)
+                val savedScroll = scrollPositions[currentDir.absolutePath]
+                if (savedScroll != null && savedScroll.first < filesList.size) {
+                    listState.scrollToItem(savedScroll.first, savedScroll.second)
+                } else {
+                    listState.scrollToItem(0)
+                }
+                isTransitioning = false
+            }
+        }
     }
 
     val displayedFiles = if (searchQuery.isNotBlank()) globalSearchResults else filesList
@@ -169,102 +221,108 @@ fun FileManagerScreen() {
         topBar = { FileManagerTopBar() },
         containerColor = BgColor
     ) { innerPadding ->
-        LazyColumn(
-            state = listState,
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
-            contentPadding = PaddingValues(horizontal = 20.dp)
+                .padding(innerPadding)
+                .padding(horizontal = 20.dp)
         ) {
-            // Header Section
-            item {
-                Spacer(modifier = Modifier.height(12.dp))
-                FileSearchBar(
-                    query = searchQuery,
-                    isSearching = isSearching,
-                    onQueryChange = { searchQuery = it }
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                BreadcrumbNavigation(
-                    rootPath = rootPath,
-                    currentDir = currentDir,
-                    onBreadcrumbClick = {
-                        currentDir = it
-                        searchQuery = ""
-                    }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-            }
+            // FIXED HEADER: Search Bar and Breadcrumbs never move!
+            Spacer(modifier = Modifier.height(12.dp))
+            FileSearchBar(
+                query = searchQuery,
+                isSearching = isSearching,
+                onQueryChange = { searchQuery = it }
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            BreadcrumbNavigation(
+                rootPath = rootPath,
+                currentDir = currentDir,
+                onBreadcrumbClick = { changeDirectory(it) } // Uses Smart Helper
+            )
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Body Section
-            if (!hasStoragePermission) {
-                item {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(PrimaryBlue.copy(alpha = 0.1f)).clickable { requestPermission() }.padding(24.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Outlined.Folder, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(48.dp))
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text("Storage Permission Required", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                            Text("Tap here to allow access to your files", fontSize = 13.sp, color = TextSecondary)
-                        }
-                    }
-                }
-            } else if (isSearching) {
-                item {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(top = 80.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(36.dp), color = PrimaryBlue, strokeWidth = 3.dp)
-                    }
-                }
-            } else if (displayedFiles.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = if (searchQuery.isNotEmpty()) "No matches found for \"$searchQuery\"" else "This folder is empty",
-                            fontSize = 14.sp,
-                            color = TextTertiary
-                        )
-                    }
-                }
-            } else {
-                items(displayedFiles) { file ->
-                    Box(modifier = Modifier.padding(bottom = 8.dp)) {
-                        val (icon, bg, fg) = getFileIconAndColors(file)
+            // BODY AREA: Files and Overlays
+            Box(modifier = Modifier.fillMaxSize()) {
 
-                        val subtitle = if (searchQuery.isNotBlank()) {
-                            "In: ${file.parentFile?.name ?: "Storage"} • ${formatDate(file.lastModified())}"
-                        } else if (file.isDirectory) {
-                            "Folder • ${formatDate(file.lastModified())}"
-                        } else {
-                            "${formatSize(file.length())} • ${formatDate(file.lastModified())}"
-                        }
-
-                        FileListItem(
-                            icon = icon, iconBgColor = bg, iconColor = fg,
-                            title = file.name, subtitle = subtitle,
-                            onOptionsClick = {
-                                selectedFileForOptions = file
-                                showBottomSheet = true
-                            },
-                            onItemClick = {
-                                if (file.isDirectory) {
-                                    currentDir = file
-                                    searchQuery = ""
-                                } else {
-                                    Toast.makeText(context, "Opening ${file.name}...", Toast.LENGTH_SHORT).show()
+                // The actual scrollable list of files
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    if (!hasStoragePermission) {
+                        item {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(PrimaryBlue.copy(alpha = 0.1f)).clickable { requestPermission() }.padding(24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(Icons.Outlined.Folder, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(48.dp))
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text("Storage Permission Required", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                    Text("Tap here to allow access to your files", fontSize = 13.sp, color = TextSecondary)
                                 }
                             }
+                        }
+                    } else if (displayedFiles.isEmpty() && !isTransitioning && !isSearching) {
+                        item {
+                            Box(modifier = Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = if (searchQuery.isNotEmpty()) "No matches found for \"$searchQuery\"" else "This folder is empty",
+                                    fontSize = 14.sp,
+                                    color = TextTertiary
+                                )
+                            }
+                        }
+                    } else {
+                        items(displayedFiles) { file ->
+                            Box(modifier = Modifier.padding(bottom = 8.dp)) {
+                                val (icon, bg, fg) = getFileIconAndColors(file)
+
+                                val subtitle = if (searchQuery.isNotBlank()) {
+                                    "In: ${file.parentFile?.name ?: "Storage"} • ${formatDate(file.lastModified())}"
+                                } else if (file.isDirectory) {
+                                    "Folder • ${formatDate(file.lastModified())}"
+                                } else {
+                                    "${formatSize(file.length())} • ${formatDate(file.lastModified())}"
+                                }
+
+                                FileListItem(
+                                    icon = icon, iconBgColor = bg, iconColor = fg,
+                                    title = file.name, subtitle = subtitle,
+                                    onOptionsClick = {
+                                        selectedFileForOptions = file
+                                        showBottomSheet = true
+                                    },
+                                    onItemClick = {
+                                        if (file.isDirectory) {
+                                            changeDirectory(file) // Uses Smart Helper
+                                        } else {
+                                            Toast.makeText(context, "Opening ${file.name}...", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                        item { Spacer(modifier = Modifier.height(100.dp)) }
+                    }
+                }
+
+                // THE TRANSITION OVERLAY: Hides the list while Compose scrolls it perfectly
+                if (isTransitioning || isSearching) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(BgColor), // Matches background to hide the list entirely
+                        contentAlignment = Alignment.TopCenter
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.padding(top = 60.dp).size(36.dp),
+                            color = PrimaryBlue,
+                            strokeWidth = 3.dp
                         )
                     }
                 }
-                item { Spacer(modifier = Modifier.height(100.dp)) }
             }
         }
     }
@@ -299,7 +357,7 @@ fun FileManagerScreen() {
         }
     }
 
-    // Modern Bottom Sheet for Renaming (FIXED HEIGHTS TO PREVENT JUMPING)
+    // Modern Bottom Sheet for Renaming
     if (showRenameSheet && selectedFileForOptions != null) {
         ModalBottomSheet(
             onDismissRequest = { showRenameSheet = false },
@@ -326,7 +384,7 @@ fun FileManagerScreen() {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(56.dp) // <-- FIX 1: Hardcoded height prevents jumping when typing
+                                .height(56.dp)
                                 .border(
                                     width = if (renameError.isNotEmpty()) 1.5.dp else 0.dp,
                                     color = if (renameError.isNotEmpty()) Red500 else Color.Transparent,
@@ -334,7 +392,7 @@ fun FileManagerScreen() {
                                 )
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(Slate100)
-                                .padding(horizontal = 16.dp), // Removed vertical padding since height is fixed
+                                .padding(horizontal = 16.dp),
                             contentAlignment = Alignment.CenterStart
                         ) {
                             if (newFileName.isEmpty()) {
@@ -345,7 +403,6 @@ fun FileManagerScreen() {
                     }
                 )
 
-                // <-- FIX 2: A Box that ALWAYS reserves 24.dp of height, so the sheet never resizes
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
