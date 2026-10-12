@@ -66,7 +66,10 @@ val Slate600 = Color(0xFF475569)
 fun FileManagerScreen() {
     val context = LocalContext.current
     var showBottomSheet by remember { mutableStateOf(false) }
+    var showRenameSheet by remember { mutableStateOf(false) }
     var selectedFileForOptions by remember { mutableStateOf<File?>(null) }
+    var newFileName by remember { mutableStateOf("") }
+    var renameError by remember { mutableStateOf("") }
 
     // File System & Search State
     val rootPath = remember { Environment.getExternalStorageDirectory() }
@@ -77,13 +80,12 @@ fun FileManagerScreen() {
     var globalSearchResults by remember { mutableStateOf<List<File>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
 
-    // --- NEW: Scroll State tracking ---
     val listState = rememberLazyListState()
 
     // Handle physical back button to navigate up folders
     BackHandler(enabled = currentDir.absolutePath != rootPath.absolutePath) {
         currentDir = currentDir.parentFile ?: rootPath
-        searchQuery = "" // Clear search when going back
+        searchQuery = ""
     }
 
     // Permission State
@@ -92,7 +94,7 @@ fun FileManagerScreen() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 Environment.isExternalStorageManager()
             } else {
-                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+                ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
             }
         )
     }
@@ -103,7 +105,7 @@ fun FileManagerScreen() {
         hasStoragePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
         } else {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
         }
     }
 
@@ -122,7 +124,7 @@ fun FileManagerScreen() {
                 settingsLauncher.launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
             }
         } else {
-            legacyLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+            legacyLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
     }
 
@@ -143,8 +145,8 @@ fun FileManagerScreen() {
     // 2. Perform Global Device Search when typing
     LaunchedEffect(searchQuery, currentDir, hasStoragePermission) {
         if (searchQuery.isNotBlank() && hasStoragePermission) {
-            isSearching = true // Trigger the center loading animation
-            delay(300) // Wait for user to stop typing
+            isSearching = true
+            delay(300)
 
             withContext(Dispatchers.IO) {
                 globalSearchResults = searchFilesGlobally(context, searchQuery, currentDir)
@@ -156,7 +158,7 @@ fun FileManagerScreen() {
         }
     }
 
-    // --- NEW: Instantly snap to the top when the folder or search changes ---
+    // Instantly snap to the top when the folder or search changes
     LaunchedEffect(currentDir, searchQuery) {
         listState.scrollToItem(0)
     }
@@ -168,7 +170,7 @@ fun FileManagerScreen() {
         containerColor = BgColor
     ) { innerPadding ->
         LazyColumn(
-            state = listState, // --- NEW: Attach the scroll state here ---
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
@@ -215,11 +217,7 @@ fun FileManagerScreen() {
                         modifier = Modifier.fillMaxWidth().padding(top = 80.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(36.dp),
-                            color = PrimaryBlue,
-                            strokeWidth = 3.dp
-                        )
+                        CircularProgressIndicator(modifier = Modifier.size(36.dp), color = PrimaryBlue, strokeWidth = 3.dp)
                     }
                 }
             } else if (displayedFiles.isEmpty()) {
@@ -271,7 +269,7 @@ fun FileManagerScreen() {
         }
     }
 
-    // Contextual Bottom Drawer
+    // Contextual Bottom Drawer for File Options
     if (showBottomSheet && selectedFileForOptions != null) {
         ModalBottomSheet(
             onDismissRequest = { showBottomSheet = false },
@@ -281,6 +279,12 @@ fun FileManagerScreen() {
             FileOptionsDrawerContent(
                 file = selectedFileForOptions!!,
                 onDismiss = { showBottomSheet = false },
+                onRename = {
+                    newFileName = selectedFileForOptions?.name ?: ""
+                    renameError = ""
+                    showBottomSheet = false
+                    showRenameSheet = true
+                },
                 onDelete = {
                     try {
                         if (selectedFileForOptions?.deleteRecursively() == true) {
@@ -292,6 +296,130 @@ fun FileManagerScreen() {
                     showBottomSheet = false
                 }
             )
+        }
+    }
+
+    // Modern Bottom Sheet for Renaming (FIXED HEIGHTS TO PREVENT JUMPING)
+    if (showRenameSheet && selectedFileForOptions != null) {
+        ModalBottomSheet(
+            onDismissRequest = { showRenameSheet = false },
+            containerColor = Color.White,
+            dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFCBD5E1)) }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, bottom = 32.dp)
+            ) {
+                Text("Rename", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                Spacer(modifier = Modifier.height(16.dp))
+
+                BasicTextField(
+                    value = newFileName,
+                    onValueChange = {
+                        newFileName = it
+                        if (renameError.isNotEmpty()) renameError = ""
+                    },
+                    textStyle = TextStyle(fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.Medium),
+                    singleLine = true,
+                    decorationBox = { innerTextField ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp) // <-- FIX 1: Hardcoded height prevents jumping when typing
+                                .border(
+                                    width = if (renameError.isNotEmpty()) 1.5.dp else 0.dp,
+                                    color = if (renameError.isNotEmpty()) Red500 else Color.Transparent,
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Slate100)
+                                .padding(horizontal = 16.dp), // Removed vertical padding since height is fixed
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            if (newFileName.isEmpty()) {
+                                Text("Enter new name", color = TextTertiary, fontSize = 14.sp)
+                            }
+                            innerTextField()
+                        }
+                    }
+                )
+
+                // <-- FIX 2: A Box that ALWAYS reserves 24.dp of height, so the sheet never resizes
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(24.dp)
+                        .padding(start = 4.dp, top = 4.dp),
+                    contentAlignment = Alignment.TopStart
+                ) {
+                    if (renameError.isNotEmpty()) {
+                        Text(
+                            text = renameError,
+                            color = Red500,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Cancel",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = TextTertiary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showRenameSheet = false }
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(PrimaryBlue)
+                            .clickable {
+                                val oldFile = selectedFileForOptions!!
+
+                                if (newFileName.isBlank()) {
+                                    renameError = "File name cannot be empty"
+                                    return@clickable
+                                }
+                                if (newFileName == oldFile.name) {
+                                    renameError = "Please enter a different name"
+                                    return@clickable
+                                }
+
+                                val newFile = File(oldFile.parentFile, newFileName)
+                                if (!newFile.exists()) {
+                                    if (oldFile.renameTo(newFile)) {
+                                        filesList = filesList.map { if (it.absolutePath == oldFile.absolutePath) newFile else it }
+                                            .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+                                        globalSearchResults = globalSearchResults.map { if (it.absolutePath == oldFile.absolutePath) newFile else it }
+                                            .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+
+                                        Toast.makeText(context, "Renamed successfully", Toast.LENGTH_SHORT).show()
+                                        showRenameSheet = false
+                                    } else {
+                                        Toast.makeText(context, "Failed to rename", Toast.LENGTH_SHORT).show()
+                                    }
+                                } else {
+                                    renameError = "A file with this name already exists"
+                                }
+                            }
+                            .padding(horizontal = 20.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Rename", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                    }
+                }
+            }
         }
     }
 }
@@ -507,7 +635,12 @@ fun FileListItem(
 }
 
 @Composable
-fun FileOptionsDrawerContent(file: File, onDismiss: () -> Unit, onDelete: () -> Unit) {
+fun FileOptionsDrawerContent(
+    file: File,
+    onDismiss: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit
+) {
     val (icon, bg, fg) = getFileIconAndColors(file)
     val subtitle = if (file.isDirectory) "Folder" else "File • ${formatSize(file.length())}"
 
@@ -526,7 +659,7 @@ fun FileOptionsDrawerContent(file: File, onDismiss: () -> Unit, onDelete: () -> 
         HorizontalDivider(color = Slate100)
         Spacer(modifier = Modifier.height(8.dp))
 
-        DrawerActionItem(icon = Icons.Outlined.Edit, title = "Rename", color = Slate800, iconColor = Slate600, onClick = { onDismiss() })
+        DrawerActionItem(icon = Icons.Outlined.Edit, title = "Rename", color = Slate800, iconColor = Slate600, onClick = onRename)
         DrawerActionItem(icon = Icons.Outlined.OpenWith, title = "Move", color = Slate800, iconColor = Slate600, onClick = { onDismiss() })
         DrawerActionItem(icon = Icons.Outlined.DeleteOutline, title = "Delete", color = Red500, iconColor = Red500, onClick = onDelete)
     }
