@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.MediaStore
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -17,10 +18,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -31,17 +35,22 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.coroutines.coroutineContext
 
 // Exact Color Tokens
 val Sky500 = Color(0xFF0EA5E9)
@@ -59,17 +68,25 @@ fun FileManagerScreen() {
     var showBottomSheet by remember { mutableStateOf(false) }
     var selectedFileForOptions by remember { mutableStateOf<File?>(null) }
 
-    // File System State
+    // File System & Search State
     val rootPath = remember { Environment.getExternalStorageDirectory() }
     var currentDir by remember { mutableStateOf(rootPath) }
     var filesList by remember { mutableStateOf<List<File>>(emptyList()) }
 
-    // Handle physical back button to navigate up folders instead of closing app
+    var searchQuery by remember { mutableStateOf("") }
+    var globalSearchResults by remember { mutableStateOf<List<File>>(emptyList()) }
+    var isSearching by remember { mutableStateOf(false) }
+
+    // --- NEW: Scroll State tracking ---
+    val listState = rememberLazyListState()
+
+    // Handle physical back button to navigate up folders
     BackHandler(enabled = currentDir.absolutePath != rootPath.absolutePath) {
         currentDir = currentDir.parentFile ?: rootPath
+        searchQuery = "" // Clear search when going back
     }
 
-    // Permission State (Reused from HomeDashboard)
+    // Permission State
     var hasStoragePermission by remember {
         mutableStateOf(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -109,13 +126,12 @@ fun FileManagerScreen() {
         }
     }
 
-    // Reactively load files whenever the directory or permissions change
+    // 1. Load current directory files
     LaunchedEffect(currentDir, hasStoragePermission) {
         if (hasStoragePermission) {
             withContext(Dispatchers.IO) {
                 try {
                     val allFiles = currentDir.listFiles()?.toList() ?: emptyList()
-                    // Sort folders first, then alphabetical
                     filesList = allFiles.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
                 } catch (e: Exception) {
                     filesList = emptyList()
@@ -124,61 +140,110 @@ fun FileManagerScreen() {
         }
     }
 
+    // 2. Perform Global Device Search when typing
+    LaunchedEffect(searchQuery, currentDir, hasStoragePermission) {
+        if (searchQuery.isNotBlank() && hasStoragePermission) {
+            isSearching = true // Trigger the center loading animation
+            delay(300) // Wait for user to stop typing
+
+            withContext(Dispatchers.IO) {
+                globalSearchResults = searchFilesGlobally(context, searchQuery, currentDir)
+            }
+            isSearching = false
+        } else {
+            globalSearchResults = emptyList()
+            isSearching = false
+        }
+    }
+
+    // --- NEW: Instantly snap to the top when the folder or search changes ---
+    LaunchedEffect(currentDir, searchQuery) {
+        listState.scrollToItem(0)
+    }
+
+    val displayedFiles = if (searchQuery.isNotBlank()) globalSearchResults else filesList
+
     Scaffold(
         topBar = { FileManagerTopBar() },
         containerColor = BgColor
     ) { innerPadding ->
-        Column(
+        LazyColumn(
+            state = listState, // --- NEW: Attach the scroll state here ---
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 20.dp)
-                .verticalScroll(rememberScrollState())
+                .padding(innerPadding),
+            contentPadding = PaddingValues(horizontal = 20.dp)
         ) {
-            Spacer(modifier = Modifier.height(12.dp))
-            FileSearchBar()
+            // Header Section
+            item {
+                Spacer(modifier = Modifier.height(12.dp))
+                FileSearchBar(
+                    query = searchQuery,
+                    isSearching = isSearching,
+                    onQueryChange = { searchQuery = it }
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                BreadcrumbNavigation(
+                    rootPath = rootPath,
+                    currentDir = currentDir,
+                    onBreadcrumbClick = {
+                        currentDir = it
+                        searchQuery = ""
+                    }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Dynamic Breadcrumbs
-            BreadcrumbNavigation(
-                rootPath = rootPath,
-                currentDir = currentDir,
-                onBreadcrumbClick = { currentDir = it }
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // File List UI
+            // Body Section
             if (!hasStoragePermission) {
-                // Permission Prompt UI
-                Box(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(PrimaryBlue.copy(alpha = 0.1f)).clickable { requestPermission() }.padding(24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Outlined.Folder, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(48.dp))
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text("Storage Permission Required", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                        Text("Tap here to allow access to your files", fontSize = 13.sp, color = TextSecondary)
+                item {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(PrimaryBlue.copy(alpha = 0.1f)).clickable { requestPermission() }.padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Outlined.Folder, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(48.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text("Storage Permission Required", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                            Text("Tap here to allow access to your files", fontSize = 13.sp, color = TextSecondary)
+                        }
                     }
                 }
-            } else if (filesList.isEmpty()) {
-                // Empty Folder UI
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("This folder is empty", fontSize = 14.sp, color = TextTertiary)
+            } else if (isSearching) {
+                item {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(top = 80.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(36.dp),
+                            color = PrimaryBlue,
+                            strokeWidth = 3.dp
+                        )
+                    }
+                }
+            } else if (displayedFiles.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (searchQuery.isNotEmpty()) "No matches found for \"$searchQuery\"" else "This folder is empty",
+                            fontSize = 14.sp,
+                            color = TextTertiary
+                        )
+                    }
                 }
             } else {
-                // Real Files UI
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    filesList.forEach { file ->
+                items(displayedFiles) { file ->
+                    Box(modifier = Modifier.padding(bottom = 8.dp)) {
                         val (icon, bg, fg) = getFileIconAndColors(file)
-                        val subtitle = if (file.isDirectory) {
-                            val count = file.listFiles()?.size ?: 0
-                            "$count items • ${formatDate(file.lastModified())}"
+
+                        val subtitle = if (searchQuery.isNotBlank()) {
+                            "In: ${file.parentFile?.name ?: "Storage"} • ${formatDate(file.lastModified())}"
+                        } else if (file.isDirectory) {
+                            "Folder • ${formatDate(file.lastModified())}"
                         } else {
                             "${formatSize(file.length())} • ${formatDate(file.lastModified())}"
                         }
@@ -193,16 +258,16 @@ fun FileManagerScreen() {
                             onItemClick = {
                                 if (file.isDirectory) {
                                     currentDir = file
+                                    searchQuery = ""
                                 } else {
-                                    // For now, show a toast. Later you can add a FileProvider to open files externally!
                                     Toast.makeText(context, "Opening ${file.name}...", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         )
                     }
                 }
+                item { Spacer(modifier = Modifier.height(100.dp)) }
             }
-            Spacer(modifier = Modifier.height(100.dp)) // Scroll clearance
         }
     }
 
@@ -220,6 +285,7 @@ fun FileManagerScreen() {
                     try {
                         if (selectedFileForOptions?.deleteRecursively() == true) {
                             filesList = filesList.filter { it.absolutePath != selectedFileForOptions?.absolutePath }
+                            globalSearchResults = globalSearchResults.filter { it.absolutePath != selectedFileForOptions?.absolutePath }
                             Toast.makeText(context, "Deleted", Toast.LENGTH_SHORT).show()
                         }
                     } catch (e: Exception) {}
@@ -231,8 +297,41 @@ fun FileManagerScreen() {
 }
 
 // -------------------------------------------------------------
-// HELPER FUNCTIONS (Sizes, Dates, and Themes)
+// HELPER FUNCTIONS
 // -------------------------------------------------------------
+
+private suspend fun searchFilesGlobally(context: Context, query: String, currentDir: File): List<File> {
+    val results = mutableSetOf<File>()
+
+    currentDir.listFiles()?.forEach { file ->
+        yield()
+        if (file.name.contains(query, ignoreCase = true)) {
+            results.add(file)
+        }
+    }
+
+    try {
+        val collection = MediaStore.Files.getContentUri("external")
+        val projection = arrayOf(MediaStore.Files.FileColumns.DATA)
+        val selection = "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ?"
+        val selectionArgs = arrayOf("%$query%")
+
+        context.contentResolver.query(collection, projection, selection, selectionArgs, null)?.use { cursor ->
+            val dataCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATA)
+            while (cursor.moveToNext()) {
+                yield()
+                val path = cursor.getString(dataCol)
+                if (path != null) {
+                    results.add(File(path))
+                }
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
+    return results.toList().sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+}
 
 private fun formatSize(sizeInBytes: Long): String {
     val kb = sizeInBytes / 1024.0
@@ -290,17 +389,52 @@ fun FileManagerTopBar() {
 }
 
 @Composable
-fun FileSearchBar() {
-    Box(
-        modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(50)).background(Slate100.copy(alpha = 0.9f)).clickable { },
-        contentAlignment = Alignment.CenterStart
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp)) {
-            Icon(Icons.Outlined.Search, contentDescription = "Search", tint = TextTertiary, modifier = Modifier.size(20.dp))
-            Spacer(modifier = Modifier.width(10.dp))
-            Text("Search files and folders", color = TextTertiary, fontSize = 14.sp)
+fun FileSearchBar(query: String, isSearching: Boolean, onQueryChange: (String) -> Unit) {
+    BasicTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        textStyle = TextStyle(fontSize = 14.sp, color = TextPrimary),
+        singleLine = true,
+        decorationBox = { innerTextField ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Slate100.copy(alpha = 0.9f)),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 14.dp).fillMaxWidth()
+                ) {
+                    if (isSearching) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = PrimaryBlue, strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Outlined.Search, contentDescription = "Search", tint = TextTertiary, modifier = Modifier.size(20.dp))
+                    }
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Box(modifier = Modifier.weight(1f)) {
+                        if (query.isEmpty()) {
+                            Text("Search files and folders", color = TextTertiary, fontSize = 14.sp)
+                        }
+                        innerTextField()
+                    }
+
+                    if (query.isNotEmpty()) {
+                        Icon(
+                            Icons.Outlined.Close,
+                            contentDescription = "Clear Search",
+                            tint = TextTertiary,
+                            modifier = Modifier.size(18.dp).clip(CircleShape).clickable { onQueryChange("") }
+                        )
+                    }
+                }
+            }
         }
-    }
+    )
 }
 
 @Composable
@@ -312,7 +446,6 @@ fun BreadcrumbNavigation(rootPath: File, currentDir: File, onBreadcrumbClick: (F
         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Root Breadcrumb
         Text(
             text = "Internal Storage",
             color = if (segments.isEmpty()) Slate800 else PrimaryBlue,
@@ -321,7 +454,6 @@ fun BreadcrumbNavigation(rootPath: File, currentDir: File, onBreadcrumbClick: (F
             modifier = Modifier.clickable(enabled = segments.isNotEmpty()) { onBreadcrumbClick(rootPath) }
         )
 
-        // Subfolder Breadcrumbs
         var pathBuilder = rootPath.absolutePath
         segments.forEachIndexed { index, segment ->
             Text(" › ", color = TextTertiary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 4.dp))
@@ -352,7 +484,7 @@ fun FileListItem(
             .border(1.dp, Slate100.copy(alpha = 0.8f), RoundedCornerShape(16.dp))
             .clip(RoundedCornerShape(16.dp))
             .background(SurfaceColor)
-            .clickable { onItemClick() } // Made the row interactive!
+            .clickable { onItemClick() }
             .padding(14.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -377,10 +509,9 @@ fun FileListItem(
 @Composable
 fun FileOptionsDrawerContent(file: File, onDismiss: () -> Unit, onDelete: () -> Unit) {
     val (icon, bg, fg) = getFileIconAndColors(file)
-    val subtitle = if (file.isDirectory) "Folder • ${file.listFiles()?.size ?: 0} items" else "File • ${formatSize(file.length())}"
+    val subtitle = if (file.isDirectory) "Folder" else "File • ${formatSize(file.length())}"
 
     Column(modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 24.dp)) {
-        // Selected File Header
         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(bg), contentAlignment = Alignment.Center) {
                 Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(26.dp))
@@ -395,7 +526,6 @@ fun FileOptionsDrawerContent(file: File, onDismiss: () -> Unit, onDelete: () -> 
         HorizontalDivider(color = Slate100)
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Actions
         DrawerActionItem(icon = Icons.Outlined.Edit, title = "Rename", color = Slate800, iconColor = Slate600, onClick = { onDismiss() })
         DrawerActionItem(icon = Icons.Outlined.OpenWith, title = "Move", color = Slate800, iconColor = Slate600, onClick = { onDismiss() })
         DrawerActionItem(icon = Icons.Outlined.DeleteOutline, title = "Delete", color = Red500, iconColor = Red500, onClick = onDelete)
