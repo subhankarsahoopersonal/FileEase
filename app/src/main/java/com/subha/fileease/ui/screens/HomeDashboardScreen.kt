@@ -33,6 +33,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.provider.MediaStore
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 
 // Exact colors from the Stitch HTML file
 val BgColor = Color(0xFFF8FAFC)
@@ -306,24 +318,68 @@ fun QuickActionCard(icon: ImageVector, title: String, onClick: () -> Unit) {
 
 @Composable
 fun DeviceStorageSection() {
-    // State variables to hold the real device data
-    var totalGb by remember { mutableStateOf(128f) } // Default fallback
+    val context = LocalContext.current
+    var totalGb by remember { mutableStateOf(128f) }
     var usedGb by remember { mutableStateOf(0f) }
     var docsGb by remember { mutableStateOf(0f) }
     var othersGb by remember { mutableStateOf(0f) }
     var progress by remember { mutableStateOf(0f) }
 
-    // Fetch real storage stats asynchronously when the UI loads
-    LaunchedEffect(Unit) {
+    // Check if we have "All Files Access" on Android 11+, or standard storage on older devices
+    var hasStoragePermission by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Environment.isExternalStorageManager()
+            } else {
+                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+            }
+        )
+    }
+
+    // Launcher for modern Android (Android 11+)
+    val settingsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        hasStoragePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    // Launcher for old Android (Android 10 and below)
+    val legacyLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasStoragePermission = isGranted
+    }
+
+    // The function that runs when you tap "Tap to Sync"
+    val handlePermissionRequest = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                }
+                settingsLauncher.launch(intent)
+            } catch (e: Exception) {
+                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                settingsLauncher.launch(intent)
+            }
+        } else {
+            legacyLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
+    // Fetch real storage stats asynchronously when UI loads or permission changes
+    LaunchedEffect(hasStoragePermission) {
         withContext(Dispatchers.IO) {
             try {
-                // StatFs reads the actual file system blocks on Android
                 val stat = StatFs(Environment.getDataDirectory().path)
                 val totalBytes = stat.totalBytes
                 val availableBytes = stat.availableBytes
                 val usedBytes = totalBytes - availableBytes
 
-                // Using 1 Billion bytes = 1 GB (OEM marketing standard for storage)
                 val gigabyte = 1_000_000_000f
                 val tGb = totalBytes / gigabyte
                 val uGb = usedBytes / gigabyte
@@ -332,13 +388,16 @@ fun DeviceStorageSection() {
                 usedGb = uGb
                 progress = if (tGb > 0) uGb / tGb else 0f
 
-                // Note: Querying the exact size of specific file types (PDFs, Images)
-                // across the entire OS requires MANAGE_EXTERNAL_STORAGE permissions.
-                // Until we implement permissions later, we proportionally split the actual used space.
-                docsGb = uGb * 0.58f
-                othersGb = uGb * 0.42f
+                if (hasStoragePermission) {
+                    val realDocsBytes = getRealDocumentsSize(context)
+                    docsGb = realDocsBytes / gigabyte
+                    othersGb = maxOf(0f, uGb - docsGb)
+                } else {
+                    docsGb = 0f
+                    othersGb = uGb
+                }
             } catch (e: Exception) {
-                // Keep default state on error
+                e.printStackTrace()
             }
         }
     }
@@ -348,13 +407,34 @@ fun DeviceStorageSection() {
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(Brush.linearGradient(listOf(Color(0xFF1E60F2), Color(0xFF3B82F6), Color(0xFF60A5FA))))
+            // Make the whole card clickable as a fallback
+            .clickable(enabled = !hasStoragePermission) { handlePermissionRequest() }
             .padding(20.dp)
     ) {
         Column {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Memory, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Device Storage", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Memory, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Device Storage", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
+                }
+
+                // The tiny button now has its own clickable modifier!
+                if (!hasStoragePermission) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.White.copy(alpha = 0.2f))
+                            .clickable { handlePermissionRequest() }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text("Tap to sync", fontSize = 10.sp, color = Color.White)
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -367,7 +447,6 @@ fun DeviceStorageSection() {
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Dynamic Progress Bar
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -377,7 +456,6 @@ fun DeviceStorageSection() {
             ) {
                 Box(
                     modifier = Modifier
-                        // Constrain fraction between 0.01 and 1.0 to prevent Compose rendering crashes on 0 width
                         .fillMaxWidth(progress.coerceIn(0.01f, 1f))
                         .fillMaxHeight()
                         .clip(CircleShape)
@@ -387,12 +465,11 @@ fun DeviceStorageSection() {
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Legend
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Documents ${"%.1f".format(docsGb)} GB", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
+                    Text(if (hasStoragePermission) "Documents ${"%.2f".format(docsGb)} GB" else "Docs Hidden", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
                 }
                 Spacer(modifier = Modifier.width(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -404,7 +481,6 @@ fun DeviceStorageSection() {
         }
     }
 }
-
 @Composable
 fun RecentActivitySection() {
     Column {
@@ -525,4 +601,32 @@ fun ActivityItem(
             modifier = Modifier.padding(start = 8.dp)
         )
     }
+}
+
+// Helper function to query the real size of all documents on the device
+private fun getRealDocumentsSize(context: Context): Long {
+    var totalSize = 0L
+    try {
+        val collection = MediaStore.Files.getContentUri("external")
+        val projection = arrayOf(MediaStore.Files.FileColumns.SIZE)
+        // MEDIA_TYPE_DOCUMENT includes PDFs, TXT, DOCX, etc.
+        val selection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?"
+        val selectionArgs = arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_DOCUMENT.toString())
+
+        context.contentResolver.query(
+            collection,
+            projection,
+            selection,
+            selectionArgs,
+            null
+        )?.use { cursor ->
+            val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
+            while (cursor.moveToNext()) {
+                totalSize += cursor.getLong(sizeColumn)
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+    return totalSize
 }
