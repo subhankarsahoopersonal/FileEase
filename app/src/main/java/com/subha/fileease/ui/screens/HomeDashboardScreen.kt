@@ -1,5 +1,17 @@
 package com.subha.fileease.ui.screens
 
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.StatFs
+import android.provider.MediaStore
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,7 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -20,31 +32,14 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import android.os.Environment
-import android.os.StatFs
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import android.Manifest
-import android.content.Context
-import android.content.pm.PackageManager
-import android.provider.MediaStore
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.ContextCompat
-import android.content.Intent
-import android.net.Uri
-import android.os.Build
-import android.provider.Settings
 
 // Exact colors from the Stitch HTML file
 val BgColor = Color(0xFFF8FAFC)
@@ -60,6 +55,15 @@ val Red50 = Color(0xFFFEF2F2)
 val Emerald500 = Color(0xFF10B981)
 val Emerald50 = Color(0xFFECFDF5)
 
+// Enums and Data Class for Real Files
+enum class ActivityIconType { PDF, IMAGE, DOC }
+data class RecentActivityData(
+    val title: String,
+    val subtitle: String,
+    val size: String,
+    val iconType: ActivityIconType
+)
+
 @Composable
 fun HomeDashboardScreen(
     // Added navigation callbacks to make the dashboard functional
@@ -69,6 +73,54 @@ fun HomeDashboardScreen(
     onImagesToPdfClick: () -> Unit = {},
     onViewAllClick: () -> Unit = {}
 ) {
+    val context = LocalContext.current
+
+    // 1. Hoist the permission state so BOTH sections can react to it instantly
+    var hasStoragePermission by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Environment.isExternalStorageManager()
+            } else {
+                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+            }
+        )
+    }
+
+    // Launcher for modern Android (Android 11+)
+    val settingsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        hasStoragePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    // Launcher for old Android (Android 10 and below)
+    val legacyLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasStoragePermission = isGranted
+    }
+
+    // The function that runs when you tap "Tap to Sync"
+    val requestPermission = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                }
+                settingsLauncher.launch(intent)
+            } catch (e: Exception) {
+                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                settingsLauncher.launch(intent)
+            }
+        } else {
+            legacyLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
     Scaffold(
         topBar = { DashboardTopBar() },
         containerColor = BgColor
@@ -93,10 +145,12 @@ fun HomeDashboardScreen(
             )
 
             Spacer(modifier = Modifier.height(24.dp))
-            DeviceStorageSection()
+            // Pass the permission down to Storage
+            DeviceStorageSection(hasStoragePermission, requestPermission)
 
             Spacer(modifier = Modifier.height(24.dp))
-            RecentActivitySection()
+            // Pass the permission down to Recent Activity
+            RecentActivitySection(hasStoragePermission)
 
             Spacer(modifier = Modifier.height(32.dp))
         }
@@ -223,7 +277,6 @@ fun QuickActionsSection(
                 fontWeight = FontWeight.Bold,
                 color = TextPrimary
             )
-            // Added clickable to "View all"
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -277,17 +330,13 @@ fun QuickActionsSection(
                 Text("Images to PDF", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1)
             }
 
-            // 2. Merge PDF - Passed the new onClick callback
             QuickActionCard(icon = Icons.Outlined.Layers, title = "Merge PDF", onClick = onMergeClick)
-            // 3. Split PDF
             QuickActionCard(icon = Icons.Outlined.ContentCut, title = "Split PDF", onClick = onSplitClick)
-            // 4. Compress PDF
             QuickActionCard(icon = Icons.Outlined.ZoomInMap, title = "Compress", onClick = onCompressClick)
         }
     }
 }
 
-// Added onClick parameter to individual cards
 @Composable
 fun QuickActionCard(icon: ImageVector, title: String, onClick: () -> Unit) {
     Column(
@@ -317,59 +366,13 @@ fun QuickActionCard(icon: ImageVector, title: String, onClick: () -> Unit) {
 }
 
 @Composable
-fun DeviceStorageSection() {
+fun DeviceStorageSection(hasStoragePermission: Boolean, onRequestPermission: () -> Unit) {
     val context = LocalContext.current
     var totalGb by remember { mutableStateOf(128f) }
     var usedGb by remember { mutableStateOf(0f) }
     var docsGb by remember { mutableStateOf(0f) }
     var othersGb by remember { mutableStateOf(0f) }
     var progress by remember { mutableStateOf(0f) }
-
-    // Check if we have "All Files Access" on Android 11+, or standard storage on older devices
-    var hasStoragePermission by remember {
-        mutableStateOf(
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Environment.isExternalStorageManager()
-            } else {
-                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-            }
-        )
-    }
-
-    // Launcher for modern Android (Android 11+)
-    val settingsLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) {
-        hasStoragePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            Environment.isExternalStorageManager()
-        } else {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-        }
-    }
-
-    // Launcher for old Android (Android 10 and below)
-    val legacyLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        hasStoragePermission = isGranted
-    }
-
-    // The function that runs when you tap "Tap to Sync"
-    val handlePermissionRequest = {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                    data = Uri.parse("package:${context.packageName}")
-                }
-                settingsLauncher.launch(intent)
-            } catch (e: Exception) {
-                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                settingsLauncher.launch(intent)
-            }
-        } else {
-            legacyLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-    }
 
     // Fetch real storage stats asynchronously when UI loads or permission changes
     LaunchedEffect(hasStoragePermission) {
@@ -408,7 +411,7 @@ fun DeviceStorageSection() {
             .clip(RoundedCornerShape(16.dp))
             .background(Brush.linearGradient(listOf(Color(0xFF1E60F2), Color(0xFF3B82F6), Color(0xFF60A5FA))))
             // Make the whole card clickable as a fallback
-            .clickable(enabled = !hasStoragePermission) { handlePermissionRequest() }
+            .clickable(enabled = !hasStoragePermission) { onRequestPermission() }
             .padding(20.dp)
     ) {
         Column {
@@ -423,13 +426,12 @@ fun DeviceStorageSection() {
                     Text("Device Storage", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
                 }
 
-                // The tiny button now has its own clickable modifier!
                 if (!hasStoragePermission) {
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
                             .background(Color.White.copy(alpha = 0.2f))
-                            .clickable { handlePermissionRequest() }
+                            .clickable { onRequestPermission() }
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
                         Text("Tap to sync", fontSize = 10.sp, color = Color.White)
@@ -481,8 +483,21 @@ fun DeviceStorageSection() {
         }
     }
 }
+
 @Composable
-fun RecentActivitySection() {
+fun RecentActivitySection(hasStoragePermission: Boolean) {
+    val context = LocalContext.current
+    var recentFiles by remember { mutableStateOf<List<RecentActivityData>>(emptyList()) }
+
+    // Fetch the 3 newest files whenever permission is granted
+    LaunchedEffect(hasStoragePermission) {
+        if (hasStoragePermission) {
+            withContext(Dispatchers.IO) {
+                recentFiles = getRecentDeviceFiles(context)
+            }
+        }
+    }
+
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -514,30 +529,55 @@ fun RecentActivitySection() {
         Spacer(modifier = Modifier.height(12.dp))
 
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            ActivityItem(
-                icon = Icons.Outlined.PictureAsPdf,
-                iconBgColor = Red50,
-                iconColor = Red500,
-                title = "document_scan.pdf",
-                subtitle = "Edited • 2 min ago",
-                size = "4.2 MB"
-            )
-            ActivityItem(
-                icon = Icons.Outlined.Image,
-                iconBgColor = Emerald50,
-                iconColor = Emerald500,
-                title = "invoice.jpg",
-                subtitle = "Converted • 18 min ago",
-                size = "1.1 MB"
-            )
-            ActivityItem(
-                icon = Icons.Outlined.Description,
-                iconBgColor = Blue50,
-                iconColor = PrimaryBlue,
-                title = "project_brief.docx",
-                subtitle = "Compressed • Yesterday",
-                size = "890 KB"
-            )
+            if (!hasStoragePermission) {
+                // Keep showing dummy design if permissions aren't granted yet
+                ActivityItem(
+                    icon = Icons.Outlined.PictureAsPdf,
+                    iconBgColor = Red50,
+                    iconColor = Red500,
+                    title = "document_scan.pdf",
+                    subtitle = "Edited • 2 min ago",
+                    size = "4.2 MB"
+                )
+                ActivityItem(
+                    icon = Icons.Outlined.Image,
+                    iconBgColor = Emerald50,
+                    iconColor = Emerald500,
+                    title = "invoice.jpg",
+                    subtitle = "Converted • 18 min ago",
+                    size = "1.1 MB"
+                )
+                ActivityItem(
+                    icon = Icons.Outlined.Description,
+                    iconBgColor = Blue50,
+                    iconColor = PrimaryBlue,
+                    title = "project_brief.docx",
+                    subtitle = "Compressed • Yesterday",
+                    size = "890 KB"
+                )
+            } else if (recentFiles.isEmpty()) {
+                Text("No recent files found", color = TextTertiary, fontSize = 13.sp, modifier = Modifier.padding(14.dp))
+            } else {
+                // Render the REAL files from the device
+                recentFiles.forEach { file ->
+                    val icon = when (file.iconType) {
+                        ActivityIconType.PDF -> Icons.Outlined.PictureAsPdf
+                        ActivityIconType.IMAGE -> Icons.Outlined.Image
+                        ActivityIconType.DOC -> Icons.Outlined.Description
+                    }
+                    val bg = when (file.iconType) {
+                        ActivityIconType.PDF -> Red50
+                        ActivityIconType.IMAGE -> Emerald50
+                        ActivityIconType.DOC -> Blue50
+                    }
+                    val fg = when (file.iconType) {
+                        ActivityIconType.PDF -> Red500
+                        ActivityIconType.IMAGE -> Emerald500
+                        ActivityIconType.DOC -> PrimaryBlue
+                    }
+                    ActivityItem(icon, bg, fg, file.title, file.subtitle, file.size)
+                }
+            }
         }
     }
 }
@@ -603,7 +643,10 @@ fun ActivityItem(
     }
 }
 
-// Helper function to query the real size of all documents on the device
+// ---------------------------------------------------------
+// ANDROID NATIVE HELPER FUNCTIONS (MEDIA STORE QUERIES)
+// ---------------------------------------------------------
+
 private fun getRealDocumentsSize(context: Context): Long {
     var totalSize = 0L
     try {
@@ -629,4 +672,79 @@ private fun getRealDocumentsSize(context: Context): Long {
         e.printStackTrace()
     }
     return totalSize
+}
+
+private fun getRecentDeviceFiles(context: Context): List<RecentActivityData> {
+    val list = mutableListOf<RecentActivityData>()
+    try {
+        val collection = MediaStore.Files.getContentUri("external")
+        val projection = arrayOf(
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.SIZE,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            MediaStore.Files.FileColumns.MIME_TYPE
+        )
+        // Sort by newest modified
+        val sortOrder = "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC"
+
+        context.contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
+            val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
+            val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
+            val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
+            val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MIME_TYPE)
+
+            var count = 0
+            while (cursor.moveToNext() && count < 3) {
+                val name = cursor.getString(nameCol) ?: "Unknown File"
+                val sizeBytes = cursor.getLong(sizeCol)
+                val dateSecs = cursor.getLong(dateCol)
+                val mime = cursor.getString(mimeCol) ?: ""
+
+                // Skip empty directories or 0 byte ghost files
+                if (sizeBytes == 0L) continue
+
+                // 1. Format Size
+                val sizeStr = if (sizeBytes > 1024 * 1024) {
+                    "%.1f MB".format(sizeBytes / (1024f * 1024f))
+                } else {
+                    "${sizeBytes / 1024} KB"
+                }
+
+                // 2. Format Time
+                val nowSecs = System.currentTimeMillis() / 1000
+                val diff = nowSecs - dateSecs
+                val timeStr = when {
+                    diff < 60 -> "Just now"
+                    diff < 3600 -> "${diff / 60} min ago"
+                    diff < 86400 -> "${diff / 3600} hours ago"
+                    diff < 172800 -> "Yesterday"
+                    else -> "${diff / 86400} days ago"
+                }
+
+                // 3. Determine Icon Theme based on extension/mime
+                val iconType = when {
+                    mime.contains("pdf", true) || name.endsWith(".pdf", true) -> ActivityIconType.PDF
+                    mime.contains("image", true) || name.endsWith(".jpg", true) || name.endsWith(".png", true) -> ActivityIconType.IMAGE
+                    else -> ActivityIconType.DOC
+                }
+
+                val verb = when(iconType) {
+                    ActivityIconType.PDF -> "Modified"
+                    ActivityIconType.IMAGE -> "Saved"
+                    ActivityIconType.DOC -> "Edited"
+                }
+
+                list.add(
+                    RecentActivityData(
+                        title = name,
+                        subtitle = "$verb • $timeStr",
+                        size = sizeStr,
+                        iconType = iconType
+                    )
+                )
+                count++
+            }
+        }
+    } catch (e: Exception) { e.printStackTrace() }
+    return list
 }
