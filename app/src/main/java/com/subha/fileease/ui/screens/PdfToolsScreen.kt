@@ -33,7 +33,7 @@ data class PdfTool(
 )
 
 @Composable
-fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit, onCompressClick: () -> Unit, onRotateClick: () -> Unit, onPasswordClick: () -> Unit) {
+fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit, onCompressClick: () -> Unit, onRotateClick: () -> Unit, onPasswordClick: () -> Unit, onExtractClick: () -> Unit) {
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
@@ -129,6 +129,8 @@ fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit, onCompres
                                 onRotateClick()
                             } else if (tool.title == "Password") {
                                 onPasswordClick()
+                            } else if (tool.title == "Extract Pages") {
+                                onExtractClick()
                             } else {
                                 coroutineScope.launch {
                                     snackbarHostState.showSnackbar(message = "${tool.title} selected")

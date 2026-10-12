@@ -59,7 +59,8 @@ fun NavigationGraph(navController: NavHostController, modifier: Modifier) {
                 onSplitClick = { navController.navigate("pdf_split") },
                 onCompressClick = { navController.navigate("pdf_compress") },
                 onRotateClick = { navController.navigate("pdf_rotate") },
-                onPasswordClick = { navController.navigate("pdf_password") }
+                onPasswordClick = { navController.navigate("pdf_password") },
+                onExtractClick = { navController.navigate("pdf_extract") }
             )
         }
 
@@ -89,6 +90,12 @@ fun NavigationGraph(navController: NavHostController, modifier: Modifier) {
 
         composable("pdf_password") {
             PdfPasswordScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable("pdf_extract") {
+            PdfExtractScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }
