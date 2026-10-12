@@ -33,7 +33,7 @@ data class PdfTool(
 )
 
 @Composable
-fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit, onCompressClick: () -> Unit, onRotateClick: () -> Unit) {
+fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit, onCompressClick: () -> Unit, onRotateClick: () -> Unit, onPasswordClick: () -> Unit) {
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
@@ -127,6 +127,8 @@ fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit, onCompres
                                 onCompressClick()
                             } else if (tool.title == "Rotate PDF") {
                                 onRotateClick()
+                            } else if (tool.title == "Password") {
+                                onPasswordClick()
                             } else {
                                 coroutineScope.launch {
                                     snackbarHostState.showSnackbar(message = "${tool.title} selected")
