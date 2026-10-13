@@ -66,7 +66,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// Exact Color Tokens
+// Exact Color Tokens (Only the originals to prevent conflicts)
 val Sky500 = Color(0xFF0EA5E9)
 val Sky50 = Color(0xFFF0F9FF)
 val Indigo500 = Color(0xFF6366F1)
@@ -86,10 +86,12 @@ fun FileManagerScreen() {
 
     var showBottomSheet by remember { mutableStateOf(false) }
     var showRenameSheet by remember { mutableStateOf(false) }
-    var showCreateFolderSheet by remember { mutableStateOf(false) } // NEW: Create Folder State
+    var showCreateFolderSheet by remember { mutableStateOf(false) }
 
     var selectedFileForOptions by remember { mutableStateOf<File?>(null) }
-    var newFileName by remember { mutableStateOf("") }
+
+    // Upgraded to TextFieldValue for smart selection
+    var newFileName by remember { mutableStateOf(TextFieldValue("")) }
     var renameError by remember { mutableStateOf("") }
 
     val rootPath = remember { Environment.getExternalStorageDirectory() }
@@ -189,14 +191,12 @@ fun FileManagerScreen() {
             val newFiles = withContext(Dispatchers.IO) {
                 try {
                     val allFiles = currentDir.listFiles()?.toList() ?: emptyList()
-                    // STRICT SORTING HERE TOO
                     allFiles.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) }))
                 } catch (e: Exception) {
                     emptyList()
                 }
             }
 
-            // Only overwrite filesList if we aren't currently transitioning or animating a new folder
             if (filesList.isEmpty() || currentDir.listFiles()?.size != filesList.size) {
                 filesList = newFiles
             }
@@ -298,7 +298,6 @@ fun FileManagerScreen() {
                         }
                     )
                 } else {
-                    // Suppress Add Folder button if searching
                     FileManagerTopBar(
                         showAddFolder = searchQuery.isBlank() && hasStoragePermission,
                         onAddFolderClick = {
@@ -434,13 +433,17 @@ fun FileManagerScreen() {
         ModalBottomSheet(
             onDismissRequest = { showBottomSheet = false },
             containerColor = Color.White,
-            dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFCBD5E1)) }
+            dragHandle = { BottomSheetDefaults.DragHandle(color = Slate100) }
         ) {
             FileOptionsDrawerContent(
                 file = selectedFileForOptions!!,
                 onDismiss = { showBottomSheet = false },
                 onRename = {
-                    newFileName = selectedFileForOptions?.name ?: ""
+                    val currentName = selectedFileForOptions?.name ?: ""
+                    newFileName = TextFieldValue(
+                        text = currentName,
+                        selection = TextRange(0, currentName.length)
+                    )
                     renameError = ""
                     showBottomSheet = false
                     showRenameSheet = true
@@ -470,16 +473,63 @@ fun FileManagerScreen() {
         }
     }
 
+    // Modern Bottom Sheet for Renaming (Upgraded with Focus & Insets fixed)
     if (showRenameSheet && selectedFileForOptions != null) {
+        val renameFocusRequester = remember { FocusRequester() }
+
+        LaunchedEffect(Unit) {
+            delay(100)
+            renameFocusRequester.requestFocus()
+        }
+
+        val attemptRename = {
+            val oldFile = selectedFileForOptions!!
+            val newNameStr = newFileName.text.trim()
+
+            if (!oldFile.exists()) {
+                showRenameSheet = false
+                purgeGhostFile(oldFile)
+            } else if (newNameStr.isBlank()) {
+                renameError = "File name cannot be empty"
+            } else if (newNameStr == oldFile.name) {
+                renameError = "Please enter a different name"
+            } else {
+                val newFile = File(oldFile.parentFile, newNameStr)
+                if (newFile.exists()) {
+                    renameError = "A file with this name already exists"
+                } else {
+                    filesList = filesList.map { if (it.absolutePath == oldFile.absolutePath) newFile else it }
+                        .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) }))
+                    globalSearchResults = globalSearchResults.map { if (it.absolutePath == oldFile.absolutePath) newFile else it }
+                        .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) }))
+                    showRenameSheet = false
+
+                    coroutineScope.launch(Dispatchers.IO) {
+                        val success = oldFile.renameTo(newFile)
+                        withContext(Dispatchers.Main) {
+                            if (success) {
+                                snackbarHostState.showSnackbar("Renamed successfully")
+                            } else {
+                                filesList = filesList.map { if (it.absolutePath == newFile.absolutePath) oldFile else it }.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) }))
+                                globalSearchResults = globalSearchResults.map { if (it.absolutePath == newFile.absolutePath) oldFile else it }.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) }))
+                                snackbarHostState.showSnackbar("Failed to rename file")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         ModalBottomSheet(
             onDismissRequest = { showRenameSheet = false },
             containerColor = Color.White,
-            dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFCBD5E1)) }
+            dragHandle = { BottomSheetDefaults.DragHandle(color = Slate100) }
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 24.dp, end = 24.dp, bottom = 32.dp)
+                    .imePadding()
+                    .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
             ) {
                 Text("Rename", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
                 Spacer(modifier = Modifier.height(16.dp))
@@ -490,8 +540,11 @@ fun FileManagerScreen() {
                         newFileName = it
                         if (renameError.isNotEmpty()) renameError = ""
                     },
+                    modifier = Modifier.focusRequester(renameFocusRequester),
                     textStyle = TextStyle(fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.Medium),
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { attemptRename() }),
                     decorationBox = { innerTextField ->
                         Box(
                             modifier = Modifier
@@ -507,7 +560,7 @@ fun FileManagerScreen() {
                                 .padding(horizontal = 16.dp),
                             contentAlignment = Alignment.CenterStart
                         ) {
-                            if (newFileName.isEmpty()) {
+                            if (newFileName.text.isEmpty()) {
                                 Text("Enter new name", color = TextTertiary, fontSize = 14.sp)
                             }
                             innerTextField()
@@ -549,53 +602,13 @@ fun FileManagerScreen() {
                             .padding(horizontal = 16.dp, vertical = 10.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
+
+                    val isEnabled = renameError.isEmpty() && newFileName.text.isNotBlank()
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .background(PrimaryBlue)
-                            .clickable {
-                                val oldFile = selectedFileForOptions!!
-
-                                if (!oldFile.exists()) {
-                                    showRenameSheet = false
-                                    purgeGhostFile(oldFile)
-                                    return@clickable
-                                }
-
-                                if (newFileName.isBlank()) {
-                                    renameError = "File name cannot be empty"
-                                    return@clickable
-                                }
-                                if (newFileName == oldFile.name) {
-                                    renameError = "Please enter a different name"
-                                    return@clickable
-                                }
-
-                                val newFile = File(oldFile.parentFile, newFileName)
-                                if (newFile.exists()) {
-                                    renameError = "A file with this name already exists"
-                                    return@clickable
-                                }
-
-                                filesList = filesList.map { if (it.absolutePath == oldFile.absolutePath) newFile else it }
-                                    .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
-                                globalSearchResults = globalSearchResults.map { if (it.absolutePath == oldFile.absolutePath) newFile else it }
-                                    .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
-                                showRenameSheet = false
-
-                                coroutineScope.launch(Dispatchers.IO) {
-                                    val success = oldFile.renameTo(newFile)
-                                    withContext(Dispatchers.Main) {
-                                        if (success) {
-                                            snackbarHostState.showSnackbar("Renamed successfully")
-                                        } else {
-                                            filesList = filesList.map { if (it.absolutePath == newFile.absolutePath) oldFile else it }.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
-                                            globalSearchResults = globalSearchResults.map { if (it.absolutePath == newFile.absolutePath) oldFile else it }.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
-                                            snackbarHostState.showSnackbar("Failed to rename file")
-                                        }
-                                    }
-                                }
-                            }
+                            .background(if (isEnabled) PrimaryBlue else PrimaryBlue.copy(alpha = 0.4f))
+                            .clickable(enabled = isEnabled) { attemptRename() }
                             .padding(horizontal = 20.dp, vertical = 10.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -606,7 +619,6 @@ fun FileManagerScreen() {
         }
     }
 
-    // NEW: Create Folder Orchestration
     if (showCreateFolderSheet) {
         CreateFolderBottomSheet(
             currentDir = currentDir,
@@ -615,31 +627,25 @@ fun FileManagerScreen() {
             onFolderCreated = { newFolder ->
                 showCreateFolderSheet = false
 
-                // 1. Wait a tiny bit for the Bottom Sheet to close before animating
                 coroutineScope.launch {
-                    delay(300) // Let the sheet dismiss animation finish
-
-                    // 2. Strict Sorting: Folders ALWAYS first, then alphabetical (case-insensitive)
+                    delay(300)
                     val updatedList = (filesList + newFolder).sortedWith(
                         compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) })
                     )
                     filesList = updatedList
 
-                    // 3. Smooth animate to the exact new position
                     val targetIndex = updatedList.indexOfFirst { it.absolutePath == newFolder.absolutePath }
                     if (targetIndex != -1) {
                         listState.animateScrollToItem(targetIndex)
                     }
                 }
 
-                // Background Disk Creation
                 coroutineScope.launch(Dispatchers.IO) {
                     val success = newFolder.mkdirs()
                     withContext(Dispatchers.Main) {
                         if (success) {
                             snackbarHostState.showSnackbar("Folder created")
                         } else {
-                            // Rollback injection
                             filesList = filesList.filter { it.absolutePath != newFolder.absolutePath }
                             haptics.performHapticFeedback(HapticFeedbackType.Reject)
                             snackbarHostState.showSnackbar("Failed to create folder")
@@ -652,7 +658,7 @@ fun FileManagerScreen() {
 }
 
 // -------------------------------------------------------------
-// NEW COMPONENT: CREATE FOLDER BOTTOM SHEET
+// CREATE FOLDER BOTTOM SHEET
 // -------------------------------------------------------------
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -665,7 +671,6 @@ fun CreateFolderBottomSheet(
     val haptics = LocalHapticFeedback.current
     val focusRequester = remember { FocusRequester() }
 
-    // Smart default generation
     val initialName = remember {
         var base = "New folder"
         var counter = 1
@@ -704,7 +709,6 @@ fun CreateFolderBottomSheet(
         }
     }
 
-    // Auto-focus keyboard orchestration
     LaunchedEffect(Unit) {
         delay(100)
         focusRequester.requestFocus()
@@ -714,12 +718,11 @@ fun CreateFolderBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = Color.White,
         dragHandle = { BottomSheetDefaults.DragHandle(color = Slate100) }
-        // Deleted the windowInsets line from here!
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .imePadding() // <--- Add this instead to push the sheet above the keyboard
+                .imePadding()
                 .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
         ) {
             Text(
@@ -753,12 +756,12 @@ fun CreateFolderBottomSheet(
                             .fillMaxWidth()
                             .height(56.dp)
                             .border(
-                                width = if (validationError != null) 1.5.dp else 0.dp, // Match Rename dialog
+                                width = if (validationError != null) 1.5.dp else 0.dp,
                                 color = if (validationError != null) Red500 else Color.Transparent,
                                 shape = RoundedCornerShape(12.dp)
                             )
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Slate100) // Solid background matching Rename sheet
+                            .background(Slate100)
                             .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
@@ -767,7 +770,6 @@ fun CreateFolderBottomSheet(
                 }
             )
 
-            // Fixed height container prevents layout jumping when errors display
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -946,7 +948,7 @@ fun FileManagerTopBar(
                 Icon(Icons.Outlined.Add, contentDescription = "Add new folder", tint = Slate700, modifier = Modifier.size(20.dp))
             }
         } else {
-            Spacer(modifier = Modifier.size(36.dp)) // Maintains header height when hidden
+            Spacer(modifier = Modifier.size(36.dp))
         }
     }
 }
