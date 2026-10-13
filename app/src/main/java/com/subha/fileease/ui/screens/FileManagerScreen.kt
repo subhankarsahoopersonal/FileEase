@@ -29,6 +29,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.*
@@ -37,13 +39,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,17 +81,17 @@ fun FileManagerScreen() {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
 
-    // Async UI State
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
     var showBottomSheet by remember { mutableStateOf(false) }
     var showRenameSheet by remember { mutableStateOf(false) }
+    var showCreateFolderSheet by remember { mutableStateOf(false) } // NEW: Create Folder State
+
     var selectedFileForOptions by remember { mutableStateOf<File?>(null) }
     var newFileName by remember { mutableStateOf("") }
     var renameError by remember { mutableStateOf("") }
 
-    // File System & Search State
     val rootPath = remember { Environment.getExternalStorageDirectory() }
     var currentDir by remember { mutableStateOf(rootPath) }
     var filesList by remember { mutableStateOf<List<File>>(emptyList()) }
@@ -95,16 +102,12 @@ fun FileManagerScreen() {
     var isSearching by remember { mutableStateOf(false) }
     var isTransitioning by remember { mutableStateOf(true) }
 
-    // Multi-select State
     var selectedFiles by remember { mutableStateOf<Set<File>>(emptySet()) }
     val isSelectionMode = selectedFiles.isNotEmpty()
 
-    // Scroll State & Memory Map
     val listState = rememberLazyListState()
     val scrollPositions = remember { mutableMapOf<String, Pair<Int, Int>>() }
 
-    // --- PHASE 5: Error State Auto-Correction Helper ---
-    // Instantly strips "ghost" files out of the UI without requiring a full directory reload
     val purgeGhostFile = { ghostFile: File ->
         filesList = filesList.filter { it.absolutePath != ghostFile.absolutePath }
         globalSearchResults = globalSearchResults.filter { it.absolutePath != ghostFile.absolutePath }
@@ -116,7 +119,6 @@ fun FileManagerScreen() {
     }
 
     val changeDirectory = { newDir: File ->
-        // PHASE 5 check: Did someone delete the folder we are trying to open?
         if (!newDir.exists()) {
             purgeGhostFile(newDir)
         } else {
@@ -137,18 +139,15 @@ fun FileManagerScreen() {
         }
     }
 
-    // Handle physical back button
     BackHandler(enabled = currentDir.absolutePath != rootPath.absolutePath || isSelectionMode) {
         if (isSelectionMode) {
             selectedFiles = emptySet()
         } else {
-            // PHASE 5: If the parent folder got deleted while we were inside, go to root safely.
             val parent = currentDir.parentFile ?: rootPath
             changeDirectory(if (parent.exists()) parent else rootPath)
         }
     }
 
-    // Permission State
     var hasStoragePermission by remember {
         mutableStateOf(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -190,12 +189,17 @@ fun FileManagerScreen() {
             val newFiles = withContext(Dispatchers.IO) {
                 try {
                     val allFiles = currentDir.listFiles()?.toList() ?: emptyList()
-                    allFiles.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+                    // STRICT SORTING HERE TOO
+                    allFiles.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) }))
                 } catch (e: Exception) {
                     emptyList()
                 }
             }
-            filesList = newFiles
+
+            // Only overwrite filesList if we aren't currently transitioning or animating a new folder
+            if (filesList.isEmpty() || currentDir.listFiles()?.size != filesList.size) {
+                filesList = newFiles
+            }
 
             if (searchQuery.isBlank()) {
                 delay(50)
@@ -241,7 +245,6 @@ fun FileManagerScreen() {
     val displayedFiles = if (searchQuery.isNotBlank()) globalSearchResults else filesList
 
     Scaffold(
-        // Custom Styled Snackbar that matches your App's modern design
         snackbarHost = {
             SnackbarHost(hostState = snackbarHostState) { data ->
                 Row(
@@ -278,12 +281,10 @@ fun FileManagerScreen() {
                         onDeleteAll = {
                             val filesToDelete = selectedFiles.toList()
 
-                            // 1. Instantly hide from UI
                             filesList = filesList.filter { !filesToDelete.contains(it) }
                             globalSearchResults = globalSearchResults.filter { !filesToDelete.contains(it) }
                             selectedFiles = emptySet()
 
-                            // 2. Process heavy deletion in background
                             coroutineScope.launch(Dispatchers.IO) {
                                 var successCount = 0
                                 filesToDelete.forEach { file ->
@@ -297,7 +298,14 @@ fun FileManagerScreen() {
                         }
                     )
                 } else {
-                    FileManagerTopBar()
+                    // Suppress Add Folder button if searching
+                    FileManagerTopBar(
+                        showAddFolder = searchQuery.isBlank() && hasStoragePermission,
+                        onAddFolderClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
+                            showCreateFolderSheet = true
+                        }
+                    )
                 }
             }
         },
@@ -373,7 +381,6 @@ fun FileManagerScreen() {
                                     isSelected = isSelected,
                                     isSelectionMode = isSelectionMode,
                                     onOptionsClick = {
-                                        // PHASE 5 Check: File still exists before opening sheet?
                                         if (!file.exists()) purgeGhostFile(file)
                                         else {
                                             selectedFileForOptions = file
@@ -381,7 +388,6 @@ fun FileManagerScreen() {
                                         }
                                     },
                                     onItemClick = {
-                                        // PHASE 5 Check: File still exists before interacting?
                                         if (!file.exists()) purgeGhostFile(file)
                                         else if (isSelectionMode) {
                                             selectedFiles = if (isSelected) selectedFiles - file else selectedFiles + file
@@ -393,7 +399,6 @@ fun FileManagerScreen() {
                                         }
                                     },
                                     onItemLongClick = {
-                                        // PHASE 5 Check
                                         if (!file.exists()) purgeGhostFile(file)
                                         else {
                                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -443,7 +448,6 @@ fun FileManagerScreen() {
                 onDelete = {
                     val fileToDelete = selectedFileForOptions!!
 
-                    // PHASE 5 check
                     if (!fileToDelete.exists()) {
                         purgeGhostFile(fileToDelete)
                         showBottomSheet = false
@@ -552,7 +556,6 @@ fun FileManagerScreen() {
                             .clickable {
                                 val oldFile = selectedFileForOptions!!
 
-                                // PHASE 5 Check: Ensure file still exists before renaming
                                 if (!oldFile.exists()) {
                                     showRenameSheet = false
                                     purgeGhostFile(oldFile)
@@ -586,7 +589,6 @@ fun FileManagerScreen() {
                                         if (success) {
                                             snackbarHostState.showSnackbar("Renamed successfully")
                                         } else {
-                                            // Rollback
                                             filesList = filesList.map { if (it.absolutePath == newFile.absolutePath) oldFile else it }.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
                                             globalSearchResults = globalSearchResults.map { if (it.absolutePath == newFile.absolutePath) oldFile else it }.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
                                             snackbarHostState.showSnackbar("Failed to rename file")
@@ -599,6 +601,220 @@ fun FileManagerScreen() {
                     ) {
                         Text("Rename", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                     }
+                }
+            }
+        }
+    }
+
+    // NEW: Create Folder Orchestration
+    if (showCreateFolderSheet) {
+        CreateFolderBottomSheet(
+            currentDir = currentDir,
+            existingFiles = filesList,
+            onDismiss = { showCreateFolderSheet = false },
+            onFolderCreated = { newFolder ->
+                showCreateFolderSheet = false
+
+                // 1. Wait a tiny bit for the Bottom Sheet to close before animating
+                coroutineScope.launch {
+                    delay(300) // Let the sheet dismiss animation finish
+
+                    // 2. Strict Sorting: Folders ALWAYS first, then alphabetical (case-insensitive)
+                    val updatedList = (filesList + newFolder).sortedWith(
+                        compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) })
+                    )
+                    filesList = updatedList
+
+                    // 3. Smooth animate to the exact new position
+                    val targetIndex = updatedList.indexOfFirst { it.absolutePath == newFolder.absolutePath }
+                    if (targetIndex != -1) {
+                        listState.animateScrollToItem(targetIndex)
+                    }
+                }
+
+                // Background Disk Creation
+                coroutineScope.launch(Dispatchers.IO) {
+                    val success = newFolder.mkdirs()
+                    withContext(Dispatchers.Main) {
+                        if (success) {
+                            snackbarHostState.showSnackbar("Folder created")
+                        } else {
+                            // Rollback injection
+                            filesList = filesList.filter { it.absolutePath != newFolder.absolutePath }
+                            haptics.performHapticFeedback(HapticFeedbackType.Reject)
+                            snackbarHostState.showSnackbar("Failed to create folder")
+                        }
+                    }
+                }
+            }
+        )
+    }
+}
+
+// -------------------------------------------------------------
+// NEW COMPONENT: CREATE FOLDER BOTTOM SHEET
+// -------------------------------------------------------------
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CreateFolderBottomSheet(
+    currentDir: File,
+    existingFiles: List<File>,
+    onDismiss: () -> Unit,
+    onFolderCreated: (File) -> Unit
+) {
+    val haptics = LocalHapticFeedback.current
+    val focusRequester = remember { FocusRequester() }
+
+    // Smart default generation
+    val initialName = remember {
+        var base = "New folder"
+        var counter = 1
+        while (existingFiles.any { it.name.equals(base, ignoreCase = true) }) {
+            base = "New folder ($counter)"
+            counter++
+        }
+        base
+    }
+
+    var textFieldValue by remember {
+        mutableStateOf(TextFieldValue(initialName, TextRange(0, initialName.length)))
+    }
+    var validationError by remember { mutableStateOf<String?>(null) }
+
+    fun validate(input: String): Boolean {
+        val trimmed = input.trim()
+        val illegalRegex = Regex("""[/?%*:|"<>\\]""")
+        return when {
+            trimmed.isEmpty() -> {
+                validationError = "Folder name cannot be empty"
+                false
+            }
+            trimmed.contains(illegalRegex) -> {
+                validationError = "Contains invalid characters"
+                false
+            }
+            existingFiles.any { it.name.equals(trimmed, ignoreCase = true) } -> {
+                validationError = "A folder with this name already exists"
+                false
+            }
+            else -> {
+                validationError = null
+                true
+            }
+        }
+    }
+
+    // Auto-focus keyboard orchestration
+    LaunchedEffect(Unit) {
+        delay(100)
+        focusRequester.requestFocus()
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        dragHandle = { BottomSheetDefaults.DragHandle(color = Slate100) }
+        // Deleted the windowInsets line from here!
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding() // <--- Add this instead to push the sheet above the keyboard
+                .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
+        ) {
+            Text(
+                text = "New folder",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            BasicTextField(
+                value = textFieldValue,
+                onValueChange = {
+                    textFieldValue = it
+                    validate(it.text)
+                },
+                modifier = Modifier.focusRequester(focusRequester),
+                textStyle = TextStyle(fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.Medium),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = {
+                    if (validate(textFieldValue.text)) {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onFolderCreated(File(currentDir, textFieldValue.text.trim()))
+                    }
+                }),
+                decorationBox = { innerTextField ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .border(
+                                width = if (validationError != null) 1.5.dp else 0.dp, // Match Rename dialog
+                                color = if (validationError != null) Red500 else Color.Transparent,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Slate100) // Solid background matching Rename sheet
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        innerTextField()
+                    }
+                }
+            )
+
+            // Fixed height container prevents layout jumping when errors display
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(24.dp)
+                    .padding(start = 4.dp, top = 4.dp),
+                contentAlignment = Alignment.TopStart
+            ) {
+                validationError?.let {
+                    Text(text = it, color = Red500, fontSize = 12.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Cancel",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = TextTertiary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onDismiss() }
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                )
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                val isEnabled = validationError == null && textFieldValue.text.isNotBlank()
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isEnabled) PrimaryBlue else PrimaryBlue.copy(alpha = 0.4f))
+                        .clickable(enabled = isEnabled) {
+                            if (validate(textFieldValue.text)) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onFolderCreated(File(currentDir, textFieldValue.text.trim()))
+                            }
+                        }
+                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Create", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                 }
             }
         }
@@ -704,7 +920,10 @@ private fun getFileIconAndColors(file: File): Triple<ImageVector, Color, Color> 
 // -------------------------------------------------------------
 
 @Composable
-fun FileManagerTopBar() {
+fun FileManagerTopBar(
+    showAddFolder: Boolean = true,
+    onAddFolderClick: () -> Unit = {}
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -714,11 +933,20 @@ fun FileManagerTopBar() {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text("Files", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-        Box(
-            modifier = Modifier.size(36.dp).clip(CircleShape).background(Slate100).clickable { },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Outlined.Add, contentDescription = "Add new file", tint = Slate700, modifier = Modifier.size(20.dp))
+
+        if (showAddFolder) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(Slate100)
+                    .clickable { onAddFolderClick() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Outlined.Add, contentDescription = "Add new folder", tint = Slate700, modifier = Modifier.size(20.dp))
+            }
+        } else {
+            Spacer(modifier = Modifier.size(36.dp)) // Maintains header height when hidden
         }
     }
 }
