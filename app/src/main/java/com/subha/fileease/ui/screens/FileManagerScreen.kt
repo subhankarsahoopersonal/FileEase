@@ -66,7 +66,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// Exact Color Tokens (Only the originals to prevent conflicts)
+// Exact Color Tokens
 val Sky500 = Color(0xFF0EA5E9)
 val Sky50 = Color(0xFFF0F9FF)
 val Indigo500 = Color(0xFF6366F1)
@@ -89,8 +89,6 @@ fun FileManagerScreen() {
     var showCreateFolderSheet by remember { mutableStateOf(false) }
 
     var selectedFileForOptions by remember { mutableStateOf<File?>(null) }
-
-    // Upgraded to TextFieldValue for smart selection
     var newFileName by remember { mutableStateOf(TextFieldValue("")) }
     var renameError by remember { mutableStateOf("") }
 
@@ -473,7 +471,6 @@ fun FileManagerScreen() {
         }
     }
 
-    // Modern Bottom Sheet for Renaming (Upgraded with Focus & Insets fixed)
     if (showRenameSheet && selectedFileForOptions != null) {
         val renameFocusRequester = remember { FocusRequester() }
 
@@ -498,12 +495,27 @@ fun FileManagerScreen() {
                 if (newFile.exists()) {
                     renameError = "A file with this name already exists"
                 } else {
-                    filesList = filesList.map { if (it.absolutePath == oldFile.absolutePath) newFile else it }
+
+                    // 1. UPDATE LIST INSTANTLY FOR RECOMPOSITION
+                    val updatedList = filesList.map { if (it.absolutePath == oldFile.absolutePath) newFile else it }
                         .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) }))
+
+                    filesList = updatedList
                     globalSearchResults = globalSearchResults.map { if (it.absolutePath == oldFile.absolutePath) newFile else it }
                         .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) }))
-                    showRenameSheet = false
 
+                    showRenameSheet = false // Triggers keyboard dismissal
+
+                    // 2. DELAY TO LET KEYBOARD CLOSE AND LAYOUT CALCULATE, THEN SCROLL
+                    coroutineScope.launch {
+                        delay(400) // Wait for keyboard hide + list layout pass
+                        val targetIndex = updatedList.indexOfFirst { it.absolutePath == newFile.absolutePath }
+                        if (targetIndex != -1) {
+                            listState.animateScrollToItem(targetIndex)
+                        }
+                    }
+
+                    // 3. BACKGROUND I/O
                     coroutineScope.launch(Dispatchers.IO) {
                         val success = oldFile.renameTo(newFile)
                         withContext(Dispatchers.Main) {
@@ -625,14 +637,18 @@ fun FileManagerScreen() {
             existingFiles = filesList,
             onDismiss = { showCreateFolderSheet = false },
             onFolderCreated = { newFolder ->
-                showCreateFolderSheet = false
 
+                // 1. UPDATE LIST INSTANTLY FOR RECOMPOSITION
+                val updatedList = (filesList + newFolder).sortedWith(
+                    compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) })
+                )
+                filesList = updatedList
+
+                showCreateFolderSheet = false // Triggers keyboard dismissal
+
+                // 2. DELAY TO LET KEYBOARD CLOSE AND LAYOUT CALCULATE, THEN SCROLL
                 coroutineScope.launch {
-                    delay(300)
-                    val updatedList = (filesList + newFolder).sortedWith(
-                        compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) })
-                    )
-                    filesList = updatedList
+                    delay(400) // Crucial: wait for keyboard to hide and layout pass
 
                     val targetIndex = updatedList.indexOfFirst { it.absolutePath == newFolder.absolutePath }
                     if (targetIndex != -1) {
@@ -640,6 +656,7 @@ fun FileManagerScreen() {
                     }
                 }
 
+                // 3. BACKGROUND I/O
                 coroutineScope.launch(Dispatchers.IO) {
                     val success = newFolder.mkdirs()
                     withContext(Dispatchers.Main) {
