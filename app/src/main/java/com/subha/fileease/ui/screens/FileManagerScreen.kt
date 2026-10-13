@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -80,6 +81,7 @@ val Slate600 = Color(0xFF475569)
 fun FileManagerScreen() {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
+    val focusManager = LocalFocusManager.current // 1. Capture Focus Manager for Keyboard Control
 
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -195,7 +197,7 @@ fun FileManagerScreen() {
                 }
             }
 
-            if (filesList.isEmpty() || currentDir.listFiles()?.size != filesList.size) {
+            if (filesList.isEmpty() || newFiles.size != filesList.size) {
                 filesList = newFiles
             }
 
@@ -358,7 +360,10 @@ fun FileManagerScreen() {
                             }
                         }
                     } else {
-                        items(displayedFiles) { file ->
+                        items(
+                            items = displayedFiles,
+                            key = { file -> file.absolutePath }
+                        ) { file ->
                             Box(modifier = Modifier.padding(bottom = 8.dp)) {
                                 val (icon, bg, fg) = getFileIconAndColors(file)
 
@@ -471,8 +476,10 @@ fun FileManagerScreen() {
         }
     }
 
+    // Modern Bottom Sheet for Renaming
     if (showRenameSheet && selectedFileForOptions != null) {
         val renameFocusRequester = remember { FocusRequester() }
+        val renameSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true) // 2. Orchestrated Sheet State
 
         LaunchedEffect(Unit) {
             delay(100)
@@ -496,7 +503,6 @@ fun FileManagerScreen() {
                     renameError = "A file with this name already exists"
                 } else {
 
-                    // 1. UPDATE LIST INSTANTLY FOR RECOMPOSITION
                     val updatedList = filesList.map { if (it.absolutePath == oldFile.absolutePath) newFile else it }
                         .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) }))
 
@@ -504,18 +510,21 @@ fun FileManagerScreen() {
                     globalSearchResults = globalSearchResults.map { if (it.absolutePath == oldFile.absolutePath) newFile else it }
                         .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) }))
 
-                    showRenameSheet = false // Triggers keyboard dismissal
-
-                    // 2. DELAY TO LET KEYBOARD CLOSE AND LAYOUT CALCULATE, THEN SCROLL
                     coroutineScope.launch {
-                        delay(400) // Wait for keyboard hide + list layout pass
+                        // ORCHESTRATION SEQUENCE:
+                        focusManager.clearFocus() // 1. Smoothly slide keyboard down
+                        renameSheetState.hide()   // 2. Suspend while sheet gracefully animates out
+                        showRenameSheet = false   // 3. Unmount from tree only after animation finishes
+
+                        delay(150) // 4. Let LazyColumn measure the removed IME insets
+
+                        // 5. Scroll Liquid Smoothly
                         val targetIndex = updatedList.indexOfFirst { it.absolutePath == newFile.absolutePath }
                         if (targetIndex != -1) {
                             listState.animateScrollToItem(targetIndex)
                         }
                     }
 
-                    // 3. BACKGROUND I/O
                     coroutineScope.launch(Dispatchers.IO) {
                         val success = oldFile.renameTo(newFile)
                         withContext(Dispatchers.Main) {
@@ -534,6 +543,7 @@ fun FileManagerScreen() {
 
         ModalBottomSheet(
             onDismissRequest = { showRenameSheet = false },
+            sheetState = renameSheetState, // Apply Stateful Dismissal
             containerColor = Color.White,
             dragHandle = { BottomSheetDefaults.DragHandle(color = Slate100) }
         ) {
@@ -632,31 +642,35 @@ fun FileManagerScreen() {
     }
 
     if (showCreateFolderSheet) {
+        val createFolderSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true) // Orchestrated State
+
         CreateFolderBottomSheet(
             currentDir = currentDir,
             existingFiles = filesList,
+            sheetState = createFolderSheetState, // Pass state down
             onDismiss = { showCreateFolderSheet = false },
             onFolderCreated = { newFolder ->
 
-                // 1. UPDATE LIST INSTANTLY FOR RECOMPOSITION
                 val updatedList = (filesList + newFolder).sortedWith(
                     compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) })
                 )
                 filesList = updatedList
 
-                showCreateFolderSheet = false // Triggers keyboard dismissal
-
-                // 2. DELAY TO LET KEYBOARD CLOSE AND LAYOUT CALCULATE, THEN SCROLL
                 coroutineScope.launch {
-                    delay(400) // Crucial: wait for keyboard to hide and layout pass
+                    // ORCHESTRATION SEQUENCE:
+                    focusManager.clearFocus() // 1. Hide Keyboard
+                    createFolderSheetState.hide() // 2. Animate Sheet Down
+                    showCreateFolderSheet = false // 3. Unmount
 
+                    delay(150) // 4. Let Layout Settle
+
+                    // 5. Scroll Smoothly
                     val targetIndex = updatedList.indexOfFirst { it.absolutePath == newFolder.absolutePath }
                     if (targetIndex != -1) {
                         listState.animateScrollToItem(targetIndex)
                     }
                 }
 
-                // 3. BACKGROUND I/O
                 coroutineScope.launch(Dispatchers.IO) {
                     val success = newFolder.mkdirs()
                     withContext(Dispatchers.Main) {
@@ -682,6 +696,7 @@ fun FileManagerScreen() {
 fun CreateFolderBottomSheet(
     currentDir: File,
     existingFiles: List<File>,
+    sheetState: SheetState, // Added SheetState receiver
     onDismiss: () -> Unit,
     onFolderCreated: (File) -> Unit
 ) {
@@ -733,6 +748,7 @@ fun CreateFolderBottomSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState, // Apply Stateful Dismissal
         containerColor = Color.White,
         dragHandle = { BottomSheetDefaults.DragHandle(color = Slate100) }
     ) {
