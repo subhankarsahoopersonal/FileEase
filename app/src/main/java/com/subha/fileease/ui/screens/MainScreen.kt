@@ -1,6 +1,11 @@
 package com.subha.fileease.ui.screens
 
-import androidx.compose.foundation.layout.ExperimentalLayoutApi // <-- FIX: Added this import
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
@@ -30,7 +35,7 @@ sealed class BottomNavItem(val route: String, val title: String, val icon: Image
 }
 
 // 2. The Master Scaffold that holds the Top Content and the Bottom Bar
-@OptIn(ExperimentalLayoutApi::class) // <-- FIX: Opt-in to the experimental IME API to prevent the build error
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MainScreen() {
     val navController = rememberNavController()
@@ -40,8 +45,13 @@ fun MainScreen() {
 
     Scaffold(
         bottomBar = {
-            // Hide the bottom bar seamlessly when the keyboard pops up
-            if (!isKeyboardVisible) {
+            // FIX: Use AnimatedVisibility to eliminate layout recalculation delays.
+            // This will smoothly slide the bar down into the floor, and slide it back up instantly.
+            AnimatedVisibility(
+                visible = !isKeyboardVisible,
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+            ) {
                 BottomNavigationBar(navController = navController)
             }
         },
@@ -64,9 +74,7 @@ fun NavigationGraph(navController: NavHostController, modifier: Modifier) {
                 onMergeClick = { navController.navigate("pdf_merge") },
                 onSplitClick = { navController.navigate("pdf_split") },
                 onCompressClick = { navController.navigate("pdf_compress") },
-                // Since 'Images to PDF' is part of Studio, we navigate to the Studio tab
                 onImagesToPdfClick = { navController.navigate(BottomNavItem.ImageTools.route) },
-                // 'View all' takes the user to the main PDF tools grid
                 onViewAllClick = { navController.navigate(BottomNavItem.PdfTools.route) }
             )
         }
@@ -151,7 +159,6 @@ fun BottomNavigationBar(navController: NavHostController) {
                 label = { Text(text = item.title) },
                 selected = currentRoute == item.route,
                 onClick = {
-                    // Only navigate if we aren't already exactly on this tab's root
                     if (currentRoute != item.route) {
                         navController.navigate(item.route) {
                             navController.graph.startDestinationRoute?.let { route ->
@@ -159,7 +166,7 @@ fun BottomNavigationBar(navController: NavHostController) {
                             }
                             launchSingleTop = true
 
-                            // THE FIX: If the user taps the Home tab, don't restore deep links.
+                            // If the user taps the Home tab, don't restore deep links.
                             // This ensures it strictly drops them on the clean HomeDashboardScreen.
                             restoreState = item.route != BottomNavItem.Home.route
                         }
