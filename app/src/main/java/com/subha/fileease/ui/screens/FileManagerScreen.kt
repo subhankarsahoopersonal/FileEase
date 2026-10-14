@@ -20,6 +20,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -44,6 +45,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -81,7 +83,7 @@ val Slate600 = Color(0xFF475569)
 fun FileManagerScreen() {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
-    val focusManager = LocalFocusManager.current // 1. Capture Focus Manager for Keyboard Control
+    val focusManager = LocalFocusManager.current
 
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -121,6 +123,7 @@ fun FileManagerScreen() {
     }
 
     val changeDirectory = { newDir: File ->
+        focusManager.clearFocus() // Auto-dismiss keyboard on navigation
         if (!newDir.exists()) {
             purgeGhostFile(newDir)
         } else {
@@ -315,6 +318,12 @@ fun FileManagerScreen() {
                 .fillMaxSize()
                 .padding(innerPadding)
                 .padding(horizontal = 20.dp)
+                // Clear focus & keyboard when user taps empty background space
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = {
+                        focusManager.clearFocus()
+                    })
+                }
         ) {
             Spacer(modifier = Modifier.height(12.dp))
             FileSearchBar(
@@ -383,6 +392,7 @@ fun FileManagerScreen() {
                                     isSelected = isSelected,
                                     isSelectionMode = isSelectionMode,
                                     onOptionsClick = {
+                                        focusManager.clearFocus() // Auto-dismiss keyboard on options open
                                         if (!file.exists()) purgeGhostFile(file)
                                         else {
                                             selectedFileForOptions = file
@@ -390,6 +400,7 @@ fun FileManagerScreen() {
                                         }
                                     },
                                     onItemClick = {
+                                        focusManager.clearFocus() // Auto-dismiss keyboard on item tap
                                         if (!file.exists()) purgeGhostFile(file)
                                         else if (isSelectionMode) {
                                             selectedFiles = if (isSelected) selectedFiles - file else selectedFiles + file
@@ -401,6 +412,7 @@ fun FileManagerScreen() {
                                         }
                                     },
                                     onItemLongClick = {
+                                        focusManager.clearFocus()
                                         if (!file.exists()) purgeGhostFile(file)
                                         else {
                                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -476,10 +488,9 @@ fun FileManagerScreen() {
         }
     }
 
-    // Modern Bottom Sheet for Renaming
     if (showRenameSheet && selectedFileForOptions != null) {
         val renameFocusRequester = remember { FocusRequester() }
-        val renameSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true) // 2. Orchestrated Sheet State
+        val renameSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
         LaunchedEffect(Unit) {
             delay(100)
@@ -511,14 +522,12 @@ fun FileManagerScreen() {
                         .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) }))
 
                     coroutineScope.launch {
-                        // ORCHESTRATION SEQUENCE:
-                        focusManager.clearFocus() // 1. Smoothly slide keyboard down
-                        renameSheetState.hide()   // 2. Suspend while sheet gracefully animates out
-                        showRenameSheet = false   // 3. Unmount from tree only after animation finishes
+                        focusManager.clearFocus()
+                        renameSheetState.hide()
+                        showRenameSheet = false
 
-                        delay(150) // 4. Let LazyColumn measure the removed IME insets
+                        delay(150)
 
-                        // 5. Scroll Liquid Smoothly
                         val targetIndex = updatedList.indexOfFirst { it.absolutePath == newFile.absolutePath }
                         if (targetIndex != -1) {
                             listState.animateScrollToItem(targetIndex)
@@ -543,7 +552,7 @@ fun FileManagerScreen() {
 
         ModalBottomSheet(
             onDismissRequest = { showRenameSheet = false },
-            sheetState = renameSheetState, // Apply Stateful Dismissal
+            sheetState = renameSheetState,
             containerColor = Color.White,
             dragHandle = { BottomSheetDefaults.DragHandle(color = Slate100) }
         ) {
@@ -642,12 +651,12 @@ fun FileManagerScreen() {
     }
 
     if (showCreateFolderSheet) {
-        val createFolderSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true) // Orchestrated State
+        val createFolderSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
         CreateFolderBottomSheet(
             currentDir = currentDir,
             existingFiles = filesList,
-            sheetState = createFolderSheetState, // Pass state down
+            sheetState = createFolderSheetState,
             onDismiss = { showCreateFolderSheet = false },
             onFolderCreated = { newFolder ->
 
@@ -657,14 +666,12 @@ fun FileManagerScreen() {
                 filesList = updatedList
 
                 coroutineScope.launch {
-                    // ORCHESTRATION SEQUENCE:
-                    focusManager.clearFocus() // 1. Hide Keyboard
-                    createFolderSheetState.hide() // 2. Animate Sheet Down
-                    showCreateFolderSheet = false // 3. Unmount
+                    focusManager.clearFocus()
+                    createFolderSheetState.hide()
+                    showCreateFolderSheet = false
 
-                    delay(150) // 4. Let Layout Settle
+                    delay(150)
 
-                    // 5. Scroll Smoothly
                     val targetIndex = updatedList.indexOfFirst { it.absolutePath == newFolder.absolutePath }
                     if (targetIndex != -1) {
                         listState.animateScrollToItem(targetIndex)
@@ -696,7 +703,7 @@ fun FileManagerScreen() {
 fun CreateFolderBottomSheet(
     currentDir: File,
     existingFiles: List<File>,
-    sheetState: SheetState, // Added SheetState receiver
+    sheetState: SheetState,
     onDismiss: () -> Unit,
     onFolderCreated: (File) -> Unit
 ) {
@@ -748,7 +755,7 @@ fun CreateFolderBottomSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = sheetState, // Apply Stateful Dismissal
+        sheetState = sheetState,
         containerColor = Color.White,
         dragHandle = { BottomSheetDefaults.DragHandle(color = Slate100) }
     ) {
@@ -1045,11 +1052,7 @@ fun FileSearchBar(query: String, isSearching: Boolean, onQueryChange: (String) -
 
                     Spacer(modifier = Modifier.width(10.dp))
 
-                    // FIX: Use Box to explicitly center the inner text field vertically
-                    Box(
-                        modifier = Modifier.weight(1f),
-                        contentAlignment = Alignment.CenterStart // Centers the text block vertically
-                    ) {
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                         if (query.isEmpty()) {
                             Text("Search files and folders", color = TextTertiary, fontSize = 14.sp)
                         }
