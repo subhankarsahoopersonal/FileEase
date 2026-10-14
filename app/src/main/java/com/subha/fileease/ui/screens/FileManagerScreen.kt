@@ -1045,7 +1045,11 @@ fun FileSearchBar(query: String, isSearching: Boolean, onQueryChange: (String) -
 
                     Spacer(modifier = Modifier.width(10.dp))
 
-                    Box(modifier = Modifier.weight(1f)) {
+                    // FIX: Use Box to explicitly center the inner text field vertically
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.CenterStart // Centers the text block vertically
+                    ) {
                         if (query.isEmpty()) {
                             Text("Search files and folders", color = TextTertiary, fontSize = 14.sp)
                         }
