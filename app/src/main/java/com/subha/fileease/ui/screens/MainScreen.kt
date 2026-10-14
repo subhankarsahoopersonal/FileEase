@@ -1,5 +1,8 @@
 package com.subha.fileease.ui.screens
 
+import androidx.compose.foundation.layout.ExperimentalLayoutApi // <-- FIX: Added this import
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
@@ -12,7 +15,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -28,15 +30,27 @@ sealed class BottomNavItem(val route: String, val title: String, val icon: Image
 }
 
 // 2. The Master Scaffold that holds the Top Content and the Bottom Bar
+@OptIn(ExperimentalLayoutApi::class) // <-- FIX: Opt-in to the experimental IME API to prevent the build error
 @Composable
 fun MainScreen() {
     val navController = rememberNavController()
 
+    // Detect if the software keyboard is actively open
+    val isKeyboardVisible = WindowInsets.isImeVisible
+
     Scaffold(
-        bottomBar = { BottomNavigationBar(navController = navController) },
+        bottomBar = {
+            // Hide the bottom bar seamlessly when the keyboard pops up
+            if (!isKeyboardVisible) {
+                BottomNavigationBar(navController = navController)
+            }
+        },
         containerColor = Color(0xFFF8FAFC) // Light theme background
     ) { innerPadding ->
-        NavigationGraph(navController = navController, modifier = Modifier.padding(innerPadding))
+        NavigationGraph(
+            navController = navController,
+            modifier = Modifier.padding(innerPadding)
+        )
     }
 }
 

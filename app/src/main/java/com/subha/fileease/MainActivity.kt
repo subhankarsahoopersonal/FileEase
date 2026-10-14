@@ -3,6 +3,7 @@ package com.subha.fileease
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.core.view.WindowCompat
 import com.subha.fileease.ui.screens.MainScreen // Added the correct import for the navigation scaffold
 import com.subha.fileease.ui.theme.FileEaseTheme
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
@@ -13,6 +14,8 @@ class MainActivity : ComponentActivity() {
 
         // Initialize the local PDF engine
         PDFBoxResourceLoader.init(applicationContext)
+
+        WindowCompat.setDecorFitsSystemWindows(window, false)
 
         setContent {
             FileEaseTheme {

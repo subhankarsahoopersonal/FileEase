@@ -392,7 +392,7 @@ fun FileManagerScreen() {
                                     isSelected = isSelected,
                                     isSelectionMode = isSelectionMode,
                                     onOptionsClick = {
-                                        focusManager.clearFocus() // Auto-dismiss keyboard on options open
+                                        focusManager.clearFocus()
                                         if (!file.exists()) purgeGhostFile(file)
                                         else {
                                             selectedFileForOptions = file
@@ -400,7 +400,7 @@ fun FileManagerScreen() {
                                         }
                                     },
                                     onItemClick = {
-                                        focusManager.clearFocus() // Auto-dismiss keyboard on item tap
+                                        focusManager.clearFocus()
                                         if (!file.exists()) purgeGhostFile(file)
                                         else if (isSelectionMode) {
                                             selectedFiles = if (isSelected) selectedFiles - file else selectedFiles + file
@@ -559,7 +559,7 @@ fun FileManagerScreen() {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .imePadding()
+                    // COMPLETELY REMOVED .imePadding() HERE
                     .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
             ) {
                 Text("Rename", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
@@ -762,7 +762,7 @@ fun CreateFolderBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .imePadding()
+                // COMPLETELY REMOVED .imePadding() HERE
                 .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
         ) {
             Text(
