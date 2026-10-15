@@ -11,8 +11,14 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,6 +36,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -103,7 +110,6 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
     var normalizeSize by remember { mutableStateOf(false) }
     var isMerging by remember { mutableStateOf(false) }
 
-    // Phase 2: Pre-Flight Validation (Async Thumbnail & Encryption Checking)
     LaunchedEffect(fileList) {
         val unprocessed = fileList.filter { !it.isProcessed }
         if (unprocessed.isNotEmpty()) {
@@ -178,8 +184,6 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
         val totalSizeMb = fileList.sumOf { it.sizeMb }
         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val stat = StatFs(downloadsDir.path)
-
-        // Phase 2: Storage Check
         val availableMb = (stat.availableBlocksLong * stat.blockSizeLong) / (1024.0 * 1024.0)
 
         if (totalSizeMb > availableMb) {
@@ -200,13 +204,12 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
                         }
                     }
 
-                    // Phase 2: Memory-Safe Processing
-                    // Buffers up to 50MB in RAM, spilling the rest to temporary files on disk to prevent OOM
                     val memorySetting = MemoryUsageSetting.setupMixed(50 * 1024 * 1024)
                     merger.mergeDocuments(memorySetting)
 
                     withContext(Dispatchers.Main) {
                         fileList = emptyList()
+                        // Phase 3: Actionable Snackbar Hand-off
                         val result = snackbarHostState.showSnackbar(
                             message = "Success! Saved to Downloads",
                             actionLabel = "OPEN",
@@ -241,6 +244,7 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
         bottomBar = {
             MergeBottomBar(
                 isMerging = isMerging,
+                fileCount = fileList.size,
                 canMerge = fileList.size >= 2 && fileList.none { it.isEncrypted },
                 onMergeClick = { executeMerge() }
             )
@@ -257,6 +261,7 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
             FileQueueSection(
                 modifier = Modifier.zIndex(1f),
                 files = fileList,
+                isMerging = isMerging,
                 onClearAll = { fileList = emptyList() },
                 onAddMore = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
                 onRemove = { fileToRemove ->
@@ -276,6 +281,7 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
             OutputConfiguration(
                 outputName = outputName,
+                isMerging = isMerging,
                 onNameChange = { outputName = it },
                 addToc = addToc,
                 onTocToggle = { addToc = !addToc },
@@ -324,6 +330,7 @@ private fun MergeTopBar(onNavigateBack: () -> Unit) {
 private fun FileQueueSection(
     modifier: Modifier = Modifier,
     files: List<PdfFileItem>,
+    isMerging: Boolean,
     onClearAll: () -> Unit,
     onAddMore: () -> Unit,
     onRemove: (PdfFileItem) -> Unit,
@@ -351,8 +358,8 @@ private fun FileQueueSection(
                 Text(
                     text = "Clear All",
                     fontSize = 11.sp,
-                    color = Primary,
-                    modifier = Modifier.clickable { onClearAll() }
+                    color = if (isMerging) Outline else Primary,
+                    modifier = Modifier.clickable(enabled = !isMerging) { onClearAll() }
                 )
             }
         }
@@ -365,7 +372,7 @@ private fun FileQueueSection(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
                     .background(SurfaceContainerLowest)
-                    .clickable { onAddMore() }
+                    .clickable(enabled = !isMerging) { onAddMore() }
                     .padding(40.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -392,6 +399,7 @@ private fun FileQueueSection(
                             file = file,
                             order = index + 1,
                             isLast = index == files.lastIndex,
+                            isMerging = isMerging,
                             onRemove = { onRemove(file) },
                             onSwapUp = { if (index > 0) onSwap(index, index - 1) },
                             onSwapDown = { if (index < files.lastIndex) onSwap(index, index + 1) }
@@ -406,17 +414,17 @@ private fun FileQueueSection(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
-                    .background(SurfaceContainerLowest)
-                    .clickable { onAddMore() }
+                    .background(if (isMerging) SurfaceContainer else SurfaceContainerLowest)
+                    .clickable(enabled = !isMerging) { onAddMore() }
                     .padding(vertical = 14.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(Primary.copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Outlined.Add, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
+                    Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(if (isMerging) OutlineVariant else Primary.copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Outlined.Add, contentDescription = null, tint = if (isMerging) Outline else Primary, modifier = Modifier.size(18.dp))
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Add More PDFs", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Primary)
+                    Text("Add More PDFs", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (isMerging) Outline else Primary)
                 }
             }
         }
@@ -428,6 +436,7 @@ private fun PdfFileCard(
     file: PdfFileItem,
     order: Int,
     isLast: Boolean,
+    isMerging: Boolean,
     onRemove: () -> Unit,
     onSwapUp: () -> Unit,
     onSwapDown: () -> Unit
@@ -454,36 +463,39 @@ private fun PdfFileCard(
             .fillMaxWidth()
             .shadow(elevation = elevation, shape = RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.05f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
-            .padding(12.dp),
+            .padding(12.dp)
+            .alpha(if (isMerging) 0.6f else 1f), // Dim cards while merging
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
                 .size(32.dp)
-                .pointerInput(Unit) {
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
-                        onDrag = { change, dragAmount ->
-                            change.consume()
+                .pointerInput(isMerging) {
+                    if (!isMerging) { // Disable drag while merging
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
 
-                            val topLimit = if (currentOrder == 1) -cardHeightPx * 0.15f else -Float.MAX_VALUE
-                            val bottomLimit = if (currentIsLast) cardHeightPx * 0.15f else Float.MAX_VALUE
+                                val topLimit = if (currentOrder == 1) -cardHeightPx * 0.15f else -Float.MAX_VALUE
+                                val bottomLimit = if (currentIsLast) cardHeightPx * 0.15f else Float.MAX_VALUE
 
-                            dragOffsetY = (dragOffsetY + dragAmount.y).coerceIn(topLimit, bottomLimit)
+                                dragOffsetY = (dragOffsetY + dragAmount.y).coerceIn(topLimit, bottomLimit)
 
-                            if (dragOffsetY > swapThresholdPx && !currentIsLast) {
-                                currentOnSwapDown()
-                                dragOffsetY -= cardHeightPx
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            } else if (dragOffsetY < -swapThresholdPx && currentOrder > 1) {
-                                currentOnSwapUp()
-                                dragOffsetY += cardHeightPx
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            }
-                        },
-                        onDragEnd = { dragOffsetY = 0f },
-                        onDragCancel = { dragOffsetY = 0f }
-                    )
+                                if (dragOffsetY > swapThresholdPx && !currentIsLast) {
+                                    currentOnSwapDown()
+                                    dragOffsetY -= cardHeightPx
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                } else if (dragOffsetY < -swapThresholdPx && currentOrder > 1) {
+                                    currentOnSwapUp()
+                                    dragOffsetY += cardHeightPx
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
+                            },
+                            onDragEnd = { dragOffsetY = 0f },
+                            onDragCancel = { dragOffsetY = 0f }
+                        )
+                    }
                 },
             contentAlignment = Alignment.Center
         ) {
@@ -538,7 +550,7 @@ private fun PdfFileCard(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable { onRemove() },
+                    .clickable(enabled = !isMerging) { onRemove() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Outlined.Delete, contentDescription = "Remove", tint = Outline, modifier = Modifier.size(20.dp))
@@ -591,10 +603,26 @@ private fun SummaryStrip(files: List<PdfFileItem>) {
 
 @Composable
 private fun OutputConfiguration(
-    outputName: String, onNameChange: (String) -> Unit,
+    outputName: String,
+    isMerging: Boolean,
+    onNameChange: (String) -> Unit,
     addToc: Boolean, onTocToggle: () -> Unit,
     normalizeSize: Boolean, onNormalizeToggle: () -> Unit
 ) {
+    // Phase 3: Granular UI Pulse effect while merging
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseAlpha = if (isMerging) {
+        infiniteTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.4f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(800, easing = FastOutLinearInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pulseAlpha"
+        ).value
+    } else 1f
+
     Column(
         modifier = Modifier
             .padding(horizontal = 16.dp)
@@ -617,6 +645,7 @@ private fun OutputConfiguration(
         BasicTextField(
             value = outputName,
             onValueChange = onNameChange,
+            enabled = !isMerging,
             textStyle = TextStyle(fontSize = 13.sp, color = OnSurface),
             decorationBox = { innerTextField ->
                 Row(
@@ -624,7 +653,8 @@ private fun OutputConfiguration(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
                         .background(SurfaceContainerLow)
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                        .padding(horizontal = 12.dp, vertical = 12.dp)
+                        .alpha(pulseAlpha), // Animates to simulate writing state
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(Icons.Outlined.EditNote, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
@@ -644,6 +674,7 @@ private fun OutputConfiguration(
             title = "Add Table of Contents",
             subtitle = "Generate bookmarks from source file names automatically",
             isChecked = addToc,
+            enabled = !isMerging,
             onToggle = onTocToggle
         )
 
@@ -654,15 +685,26 @@ private fun OutputConfiguration(
             title = "Normalize Page Size",
             subtitle = "Auto-scale all varied sheets into unified A4 dimensions",
             isChecked = normalizeSize,
+            enabled = !isMerging,
             onToggle = onNormalizeToggle
         )
     }
 }
 
 @Composable
-private fun CustomToggleRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, subtitle: String, isChecked: Boolean, onToggle: () -> Unit) {
+private fun CustomToggleRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    isChecked: Boolean,
+    enabled: Boolean,
+    onToggle: () -> Unit
+) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable { onToggle() },
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled) { onToggle() }
+            .alpha(if (enabled) 1f else 0.5f),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Top
     ) {
@@ -714,7 +756,7 @@ private fun SecurityBadge() {
 }
 
 @Composable
-private fun MergeBottomBar(isMerging: Boolean, canMerge: Boolean, onMergeClick: () -> Unit) {
+private fun MergeBottomBar(isMerging: Boolean, fileCount: Int, canMerge: Boolean, onMergeClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -722,6 +764,7 @@ private fun MergeBottomBar(isMerging: Boolean, canMerge: Boolean, onMergeClick: 
             .shadow(elevation = 16.dp, spotColor = Color.Black.copy(alpha = 0.06f))
     ) {
         if (isMerging) {
+            // Phase 3: Indeterminate progress indicator running across the top of the bar
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = Primary, trackColor = SurfaceContainerHigh)
         }
 
@@ -737,7 +780,7 @@ private fun MergeBottomBar(isMerging: Boolean, canMerge: Boolean, onMergeClick: 
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isMerging) {
-                    Text("Processing documents...", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnPrimary)
+                    Text("Merging $fileCount documents...", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnPrimary)
                 } else {
                     Icon(Icons.Outlined.MergeType, contentDescription = null, tint = if (canMerge) OnPrimary else OutlineVariant, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(8.dp))
