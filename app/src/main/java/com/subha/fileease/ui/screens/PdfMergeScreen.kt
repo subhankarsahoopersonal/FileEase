@@ -1,10 +1,14 @@
 package com.subha.fileease.ui.screens
 
+import android.net.Uri
+import android.os.Environment
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -21,14 +25,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
+import com.tom_roush.pdfbox.multipdf.PDFMergerUtility
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 // Exact color tokens from the provided Stitch HTML Tailwind config
 private val Surface = Color(0xFFFAF8FF)
@@ -51,43 +58,108 @@ private val ErrorContainer = Color(0xFFFFDAD6)
 private val OutlineVariant = Color(0xFFC2C6D8)
 private val Outline = Color(0xFF727687)
 
+// Updated data class to hold the actual URI of the selected file
 data class PdfFileItem(
     val id: Int,
     val name: String,
-    val pages: Int,
-    val sizeMb: Double
+    val pages: Int, // Placeholder for future PDFBox page counting
+    val sizeMb: Double,
+    val uri: Uri
 )
 
 @Composable
 fun PdfMergeScreen(onNavigateBack: () -> Unit) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
     // State Management for the UI
-    var fileList by remember {
-        mutableStateOf(
-            listOf(
-                PdfFileItem(1, "Quarterly_Report_2024.pdf", 14, 3.2),
-                PdfFileItem(2, "Financial_Summary.pdf", 6, 1.1),
-                PdfFileItem(3, "Appendix_A.pdf", 8, 0.84)
-            )
-        )
-    }
-    var outputName by remember { mutableStateOf("Merged_Document_2024.pdf") }
+    var fileList by remember { mutableStateOf<List<PdfFileItem>>(emptyList()) }
+    var outputName by remember { mutableStateOf("Merged_Document.pdf") }
     var addToc by remember { mutableStateOf(true) }
     var normalizeSize by remember { mutableStateOf(false) }
     var isMerging by remember { mutableStateOf(false) }
-    val coroutineScope = rememberCoroutineScope()
+
+    // Native Android File Picker configured strictly for PDFs
+    val pdfPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        coroutineScope.launch(Dispatchers.IO) {
+            val newFiles = uris.mapNotNull { uri ->
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    cursor.moveToFirst()
+
+                    val name = cursor.getString(nameIndex) ?: "Unknown_PDF.pdf"
+                    val sizeBytes = cursor.getLong(sizeIndex)
+                    val sizeMb = sizeBytes / (1024.0 * 1024.0)
+
+                    PdfFileItem(
+                        id = uri.hashCode(),
+                        name = name,
+                        pages = 0, // Set to 0 for instant load; page parsing can be added later if needed
+                        sizeMb = Math.round(sizeMb * 100.0) / 100.0,
+                        uri = uri
+                    )
+                }
+            }
+            withContext(Dispatchers.Main) {
+                fileList = fileList + newFiles
+            }
+        }
+    }
+
+    // PDF Merge Execution Engine
+    val executeMerge = {
+        if (fileList.size < 2) {
+            coroutineScope.launch { snackbarHostState.showSnackbar("Please select at least 2 PDFs to merge.") }
+        } else {
+            coroutineScope.launch(Dispatchers.IO) {
+                isMerging = true
+                try {
+                    val merger = PDFMergerUtility()
+
+                    // Route the final file to the user's public Downloads directory
+                    val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                    val finalFileName = if (outputName.endsWith(".pdf", ignoreCase = true)) outputName else "$outputName.pdf"
+                    val outputFile = File(downloadsDir, finalFileName)
+
+                    merger.destinationFileName = outputFile.absolutePath
+
+                    // Feed each selected file into the engine
+                    fileList.forEach { item ->
+                        context.contentResolver.openInputStream(item.uri)?.let { inputStream ->
+                            merger.addSource(inputStream)
+                        }
+                    }
+
+                    // Execute the merge on the device memory
+                    merger.mergeDocuments(null)
+
+                    withContext(Dispatchers.Main) {
+                        snackbarHostState.showSnackbar("Success! Saved to Downloads: ${outputFile.name}")
+                        fileList = emptyList() // Clear queue on success
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        snackbarHostState.showSnackbar("Merge failed: ${e.localizedMessage}")
+                    }
+                } finally {
+                    withContext(Dispatchers.Main) {
+                        isMerging = false
+                    }
+                }
+            }
+        }
+    }
 
     Scaffold(
         containerColor = Surface,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = { MergeTopBar(onNavigateBack) },
         bottomBar = {
-            MergeBottomBar(isMerging) {
-                // Simulate merge action UI state
-                coroutineScope.launch {
-                    isMerging = true
-                    delay(2000)
-                    isMerging = false
-                }
-            }
+            MergeBottomBar(isMerging = isMerging, onMergeClick = { executeMerge() })
         }
     ) { innerPadding ->
         Column(
@@ -103,10 +175,7 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
             FileQueueSection(
                 files = fileList,
                 onClearAll = { fileList = emptyList() },
-                onAddMore = {
-                    val newFile = PdfFileItem(System.currentTimeMillis().toInt(), "Supplementary_Notes.pdf", 4, 0.6)
-                    fileList = fileList + newFile
-                },
+                onAddMore = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
                 onRemove = { fileToRemove ->
                     fileList = fileList.filter { it.id != fileToRemove.id }
                 }
@@ -269,6 +338,7 @@ private fun FileQueueSection(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
                     .background(SurfaceContainerLowest)
+                    .clickable { onAddMore() }
                     .padding(40.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -281,7 +351,7 @@ private fun FileQueueSection(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Queue is empty", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                    Text("Tap below to pick PDF documents from your storage", fontSize = 12.sp, color = OnSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    Text("Tap here to pick PDF documents from your storage", fontSize = 12.sp, color = OnSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 }
             }
         } else {
@@ -290,25 +360,25 @@ private fun FileQueueSection(
                     PdfFileCard(file, index + 1) { onRemove(file) }
                 }
             }
-        }
 
-        Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(SurfaceContainerLowest)
-                .clickable { onAddMore() }
-                .padding(vertical = 14.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(Primary.copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.Add, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(SurfaceContainerLowest)
+                    .clickable { onAddMore() }
+                    .padding(vertical = 14.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(Primary.copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Outlined.Add, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Add More PDFs", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Primary)
                 }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Add More PDFs", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Primary)
             }
         }
     }
@@ -342,11 +412,9 @@ private fun PdfFileCard(file: PdfFileItem, order: Int, onRemove: () -> Unit) {
         Column(modifier = Modifier.weight(1f)) {
             Text(file.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("${file.pages} pages", fontSize = 12.sp, color = OnSurfaceVariant)
+                Text("${file.sizeMb} MB", fontSize = 12.sp, color = OnSurfaceVariant)
                 Spacer(modifier = Modifier.width(6.dp))
                 Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("${file.sizeMb} MB", fontSize = 12.sp, color = OnSurfaceVariant)
                 Spacer(modifier = Modifier.width(6.dp))
                 Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(SurfaceContainer).padding(horizontal = 6.dp, vertical = 2.dp)) {
                     Text("Order #$order", fontSize = 9.sp, fontWeight = FontWeight.SemiBold, color = Primary)
@@ -368,7 +436,6 @@ private fun PdfFileCard(file: PdfFileItem, order: Int, onRemove: () -> Unit) {
 
 @Composable
 private fun SummaryStrip(files: List<PdfFileItem>) {
-    val totalPages = files.sumOf { it.pages }
     val totalSize = files.sumOf { it.sizeMb }
 
     Box(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -391,7 +458,7 @@ private fun SummaryStrip(files: List<PdfFileItem>) {
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text("QUEUE ESTIMATION", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = OnPrimaryContainer.copy(alpha = 0.9f))
-                    Text("${files.size} files · $totalPages pages · ~${"%.1f".format(totalSize)} MB total", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                    Text("${files.size} files · ~${"%.1f".format(totalSize)} MB total", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
                 }
             }
             Box(
@@ -451,7 +518,7 @@ private fun OutputConfiguration(
         )
 
         Spacer(modifier = Modifier.height(16.dp))
-        Divider(color = SurfaceContainerHigh.copy(alpha = 0.6f))
+        HorizontalDivider(color = SurfaceContainerHigh.copy(alpha = 0.6f))
         Spacer(modifier = Modifier.height(16.dp))
 
         CustomToggleRow(
