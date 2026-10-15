@@ -331,7 +331,6 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
             SecurityBadge()
 
-            // Expanded clearance to prevent the security badge from hiding behind the new taller bottom bar
             Spacer(modifier = Modifier.height(112.dp))
         }
     }
@@ -343,7 +342,7 @@ private fun MergeTopBar(onNavigateBack: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .background(SurfaceContainerLowest.copy(alpha = 0.9f))
+            .background(Surface.copy(alpha = 0.95f)) // FIX: Using Surface token for unified color
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -800,8 +799,8 @@ private fun MergeBottomBar(isMerging: Boolean, fileCount: Int, canMerge: Boolean
         modifier = Modifier
             .fillMaxWidth()
             .shadow(elevation = 16.dp, spotColor = Color.Black.copy(alpha = 0.06f))
-            .background(SurfaceContainerLowest.copy(alpha = 0.9f))
-            .navigationBarsPadding() // FIX: Forces the inner contents to respect the system gesture pill
+            .background(Surface.copy(alpha = 0.95f)) // FIX: Using Surface token for unified color
+            .navigationBarsPadding()
     ) {
         if (isMerging) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = Primary, trackColor = SurfaceContainerHigh)
