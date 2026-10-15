@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.content.FileProvider
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.multipdf.PDFMergerUtility
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -102,7 +103,7 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
     var normalizeSize by remember { mutableStateOf(false) }
     var isMerging by remember { mutableStateOf(false) }
 
-    // Async Thumbnail & Page Parsing Worker
+    // Phase 2: Pre-Flight Validation (Async Thumbnail & Encryption Checking)
     LaunchedEffect(fileList) {
         val unprocessed = fileList.filter { !it.isProcessed }
         if (unprocessed.isNotEmpty()) {
@@ -177,6 +178,8 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
         val totalSizeMb = fileList.sumOf { it.sizeMb }
         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val stat = StatFs(downloadsDir.path)
+
+        // Phase 2: Storage Check
         val availableMb = (stat.availableBlocksLong * stat.blockSizeLong) / (1024.0 * 1024.0)
 
         if (totalSizeMb > availableMb) {
@@ -197,7 +200,10 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
                         }
                     }
 
-                    merger.mergeDocuments(null)
+                    // Phase 2: Memory-Safe Processing
+                    // Buffers up to 50MB in RAM, spilling the rest to temporary files on disk to prevent OOM
+                    val memorySetting = MemoryUsageSetting.setupMixed(50 * 1024 * 1024)
+                    merger.mergeDocuments(memorySetting)
 
                     withContext(Dispatchers.Main) {
                         fileList = emptyList()
@@ -249,7 +255,6 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
 
             FileQueueSection(
-                // FIX 1: Elevate Z-Index here so dragged cards render OVER the SummaryStrip below
                 modifier = Modifier.zIndex(1f),
                 files = fileList,
                 onClearAll = { fileList = emptyList() },
@@ -377,7 +382,6 @@ private fun FileQueueSection(
                 }
             }
         } else {
-            // FIX 2: Elevate Z-Index here so dragged cards render OVER the "Add More PDFs" button
             Column(
                 modifier = Modifier.zIndex(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -462,8 +466,6 @@ private fun PdfFileCard(
                         onDrag = { change, dragAmount ->
                             change.consume()
 
-                            // FIX 3: Apply boundary clamping. Card hits a physical "wall"
-                            // preventing it from being dragged out of the list infinitely.
                             val topLimit = if (currentOrder == 1) -cardHeightPx * 0.15f else -Float.MAX_VALUE
                             val bottomLimit = if (currentIsLast) cardHeightPx * 0.15f else Float.MAX_VALUE
 
