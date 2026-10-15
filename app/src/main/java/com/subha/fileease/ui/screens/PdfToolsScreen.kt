@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -25,7 +26,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
-// Data class to hold tool info
+// Note: We removed the color variables here because they are automatically
+// inherited from HomeDashboardScreen.kt!
+
 data class PdfTool(
     val title: String,
     val subtitle: String,
@@ -33,11 +36,17 @@ data class PdfTool(
 )
 
 @Composable
-fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit, onCompressClick: () -> Unit, onRotateClick: () -> Unit, onPasswordClick: () -> Unit, onExtractClick: () -> Unit) {
+fun PdfToolsScreen(
+    onMergeClick: () -> Unit,
+    onSplitClick: () -> Unit,
+    onCompressClick: () -> Unit,
+    onRotateClick: () -> Unit,
+    onPasswordClick: () -> Unit,
+    onExtractClick: () -> Unit
+) {
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
-    // PERFORMANCE FIX: Remember the list so it doesn't reallocate during slide animations
     val tools = remember {
         listOf(
             PdfTool("Merge PDF", "Combine multiple PDFs into one", Icons.Outlined.Layers),
@@ -45,12 +54,13 @@ fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit, onCompres
             PdfTool("Compress PDF", "Reduce file size without losing quality", Icons.Outlined.Compress),
             PdfTool("Rotate PDF", "Fix orientation of your document", Icons.Outlined.RotateRight),
             PdfTool("Password", "Encrypt and protect your files", Icons.Outlined.Lock),
-            PdfTool("Extract Pages", "Get specific pages from a PDF", Icons.Outlined.DriveFileMove)
+            PdfTool("Extract Pages", "Get specific pages from a PDF", Icons.Outlined.FileCopy)
         )
     }
 
     Scaffold(
-        containerColor = SurfaceColor,
+        containerColor = BgColor,
+        topBar = { PdfToolsTopBar() },
         snackbarHost = {
             SnackbarHost(hostState = snackbarHostState) { data ->
                 Box(
@@ -84,8 +94,9 @@ fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit, onCompres
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(SurfaceColor)
+                .background(BgColor)
         ) {
+            // Header Section
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -106,6 +117,7 @@ fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit, onCompres
                 )
             }
 
+            // Grid Section
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 modifier = Modifier
@@ -115,7 +127,7 @@ fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit, onCompres
                 verticalArrangement = Arrangement.spacedBy(14.dp),
                 contentPadding = PaddingValues(top = 12.dp, bottom = 112.dp)
             ) {
-                items(tools, key = { it.title }) { tool -> // PERFORMANCE FIX: Add key for efficient recomposition
+                items(tools, key = { it.title }) { tool ->
                     PdfToolCard(
                         tool = tool,
                         onClick = {
@@ -137,6 +149,43 @@ fun PdfToolsScreen(onMergeClick: () -> Unit, onSplitClick: () -> Unit, onCompres
 }
 
 @Composable
+private fun PdfToolsTopBar() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BgColor.copy(alpha = 0.95f))
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Logo & App Name
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(PrimaryBlue),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Description,
+                    contentDescription = "Logo",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = "FileEase",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary
+            )
+        }
+    }
+}
+
+@Composable
 fun PdfToolCard(tool: PdfTool, onClick: () -> Unit) {
     Column(
         modifier = Modifier
@@ -153,8 +202,8 @@ fun PdfToolCard(tool: PdfTool, onClick: () -> Unit) {
             .background(SurfaceColor)
             .clickable { onClick() }
             .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        horizontalAlignment = Alignment.Start,
+        verticalArrangement = Arrangement.Top
     ) {
         Box(
             modifier = Modifier
@@ -170,9 +219,25 @@ fun PdfToolCard(tool: PdfTool, onClick: () -> Unit) {
                 modifier = Modifier.size(22.dp)
             )
         }
+
         Spacer(modifier = Modifier.height(14.dp))
-        Text(text = tool.title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextPrimary, lineHeight = 18.sp)
+
+        Text(
+            text = tool.title,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            color = TextPrimary,
+            lineHeight = 18.sp
+        )
+
         Spacer(modifier = Modifier.height(6.dp))
-        Text(text = tool.subtitle, fontSize = 11.sp, fontWeight = FontWeight.Normal, color = TextSecondary, lineHeight = 16.sp)
+
+        Text(
+            text = tool.subtitle,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Normal,
+            color = TextSecondary,
+            lineHeight = 16.sp
+        )
     }
 }
