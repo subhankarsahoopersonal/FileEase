@@ -168,10 +168,8 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
         ) {
-            Spacer(modifier = Modifier.height(8.dp))
-            StatusBanner()
-
             Spacer(modifier = Modifier.height(16.dp))
+
             FileQueueSection(
                 files = fileList,
                 onClearAll = { fileList = emptyList() },
@@ -210,90 +208,24 @@ private fun MergeTopBar(onNavigateBack: () -> Unit) {
             .background(SurfaceContainerLowest.copy(alpha = 0.9f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .clickable { onNavigateBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Column {
-                Text("Merge Pdf", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Primary))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Offline Engine Active • 100% On-device", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary, letterSpacing = 0.5.sp)
-                }
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .clickable { },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.Info, contentDescription = "Info", tint = OnSurfaceVariant)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(Primary),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.Person, contentDescription = "User", tint = OnPrimary, modifier = Modifier.size(18.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun StatusBanner() {
-    Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-        Row(
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(PrimaryFixed.copy(alpha = 0.6f))
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .size(44.dp)
+                .clip(CircleShape)
+                .clickable { onNavigateBack() },
+            contentAlignment = Alignment.Center
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SurfaceContainerLowest),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Outlined.CallMerge, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text("Merge Sequence Engine", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Primary)
-                    Text("Arrange cards to set final page order", fontSize = 12.sp, color = OnSurfaceVariant)
-                }
-            }
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(SurfaceContainerLowest)
-                    .padding(horizontal = 8.dp, vertical = 2.dp)
-            ) {
-                Text("v3.4 Local", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
-            }
+            Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = "Merge PDF",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = OnSurface
+        )
     }
 }
 
