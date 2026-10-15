@@ -14,7 +14,14 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -40,6 +47,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -96,6 +104,9 @@ fun FileManagerScreen() {
     var newFileName by remember { mutableStateOf(TextFieldValue("")) }
     var renameError by remember { mutableStateOf("") }
 
+    // 1. STAGING STATE: Holds the file currently being moved
+    var stagedFileForMove by remember { mutableStateOf<File?>(null) }
+
     val rootPath = remember { Environment.getExternalStorageDirectory() }
     var currentDir by remember { mutableStateOf(rootPath) }
     var filesList by remember { mutableStateOf<List<File>>(emptyList()) }
@@ -116,14 +127,18 @@ fun FileManagerScreen() {
         filesList = filesList.filter { it.absolutePath != ghostFile.absolutePath }
         globalSearchResults = globalSearchResults.filter { it.absolutePath != ghostFile.absolutePath }
         selectedFiles = selectedFiles - ghostFile
+        if (stagedFileForMove?.absolutePath == ghostFile.absolutePath) {
+            stagedFileForMove = null
+        }
 
         coroutineScope.launch {
             snackbarHostState.showSnackbar("This file no longer exists")
         }
     }
 
+    // Navigates into folders
     val changeDirectory = { newDir: File ->
-        focusManager.clearFocus() // Auto-dismiss keyboard on navigation
+        focusManager.clearFocus()
         if (!newDir.exists()) {
             purgeGhostFile(newDir)
         } else {
@@ -144,8 +159,10 @@ fun FileManagerScreen() {
         }
     }
 
-    BackHandler(enabled = currentDir.absolutePath != rootPath.absolutePath || isSelectionMode) {
-        if (isSelectionMode) {
+    BackHandler(enabled = currentDir.absolutePath != rootPath.absolutePath || isSelectionMode || stagedFileForMove != null) {
+        if (stagedFileForMove != null) {
+            stagedFileForMove = null // Cancel move on back press
+        } else if (isSelectionMode) {
             selectedFiles = emptySet()
         } else {
             val parent = currentDir.parentFile ?: rootPath
@@ -189,6 +206,7 @@ fun FileManagerScreen() {
         }
     }
 
+    // Folder Content Loader
     LaunchedEffect(currentDir, hasStoragePermission) {
         if (hasStoragePermission) {
             val newFiles = withContext(Dispatchers.IO) {
@@ -219,6 +237,7 @@ fun FileManagerScreen() {
         }
     }
 
+    // Search Loader
     LaunchedEffect(searchQuery, hasStoragePermission) {
         if (searchQuery.isNotBlank() && hasStoragePermission) {
             isSearching = true
@@ -301,8 +320,9 @@ fun FileManagerScreen() {
                         }
                     )
                 } else {
+                    // Suppress add folder button if moving a file or searching
                     FileManagerTopBar(
-                        showAddFolder = searchQuery.isBlank() && hasStoragePermission,
+                        showAddFolder = searchQuery.isBlank() && hasStoragePermission && stagedFileForMove == null,
                         onAddFolderClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
                             showCreateFolderSheet = true
@@ -319,20 +339,22 @@ fun FileManagerScreen() {
                 .fillMaxSize()
                 .padding(innerPadding)
                 .padding(horizontal = 20.dp)
-                // Clear focus & keyboard when user taps empty background space
                 .pointerInput(Unit) {
-                    detectTapGestures(onTap = {
-                        focusManager.clearFocus()
-                    })
+                    detectTapGestures(onTap = { focusManager.clearFocus() })
                 }
         ) {
             Spacer(modifier = Modifier.height(12.dp))
-            FileSearchBar(
-                query = searchQuery,
-                isSearching = isSearching,
-                onQueryChange = { searchQuery = it }
-            )
-            Spacer(modifier = Modifier.height(16.dp))
+
+            // Only show search if we aren't currently moving a file
+            if (stagedFileForMove == null) {
+                FileSearchBar(
+                    query = searchQuery,
+                    isSearching = isSearching,
+                    onQueryChange = { searchQuery = it }
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
             BreadcrumbNavigation(
                 rootPath = rootPath,
                 currentDir = currentDir,
@@ -341,9 +363,16 @@ fun FileManagerScreen() {
             Spacer(modifier = Modifier.height(8.dp))
 
             Box(modifier = Modifier.fillMaxSize()) {
+                // Smoothly animate the list padding so it doesn't snap when the bar vanishes
+                val listBottomPadding by animateDpAsState(
+                    targetValue = if (stagedFileForMove != null) 96.dp else 90.dp,
+                    label = "listBottomPadding"
+                )
+
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = listBottomPadding)
                 ) {
                     if (!hasStoragePermission) {
                         item {
@@ -374,56 +403,58 @@ fun FileManagerScreen() {
                             items = displayedFiles,
                             key = { file -> file.absolutePath }
                         ) { file ->
-                            Box(modifier = Modifier.padding(bottom = 8.dp)) {
-                                val (icon, bg, fg) = getFileIconAndColors(file)
+                            // Don't render the file in the list if it's currently being moved
+                            if (stagedFileForMove?.absolutePath != file.absolutePath || searchQuery.isNotBlank()) {
+                                Box(modifier = Modifier.padding(bottom = 8.dp)) {
+                                    val (icon, bg, fg) = getFileIconAndColors(file)
 
-                                val subtitle = if (searchQuery.isNotBlank()) {
-                                    "In: ${file.parentFile?.name ?: "Storage"} • ${formatDate(file.lastModified())}"
-                                } else if (file.isDirectory) {
-                                    "Folder • ${formatDate(file.lastModified())}"
-                                } else {
-                                    "${formatSize(file.length())} • ${formatDate(file.lastModified())}"
-                                }
-
-                                val isSelected = selectedFiles.contains(file)
-
-                                FileListItem(
-                                    icon = icon, iconBgColor = bg, iconColor = fg,
-                                    title = file.name, subtitle = subtitle,
-                                    isSelected = isSelected,
-                                    isSelectionMode = isSelectionMode,
-                                    onOptionsClick = {
-                                        focusManager.clearFocus()
-                                        if (!file.exists()) purgeGhostFile(file)
-                                        else {
-                                            selectedFileForOptions = file
-                                            showBottomSheet = true
-                                        }
-                                    },
-                                    onItemClick = {
-                                        focusManager.clearFocus()
-                                        if (!file.exists()) purgeGhostFile(file)
-                                        else if (isSelectionMode) {
-                                            selectedFiles = if (isSelected) selectedFiles - file else selectedFiles + file
-                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        } else if (file.isDirectory) {
-                                            changeDirectory(file)
-                                        } else {
-                                            openFileWithIntent(context, file)
-                                        }
-                                    },
-                                    onItemLongClick = {
-                                        focusManager.clearFocus()
-                                        if (!file.exists()) purgeGhostFile(file)
-                                        else {
-                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            selectedFiles = selectedFiles + file
-                                        }
+                                    val subtitle = if (searchQuery.isNotBlank()) {
+                                        "In: ${file.parentFile?.name ?: "Storage"} • ${formatDate(file.lastModified())}"
+                                    } else if (file.isDirectory) {
+                                        "Folder • ${formatDate(file.lastModified())}"
+                                    } else {
+                                        "${formatSize(file.length())} • ${formatDate(file.lastModified())}"
                                     }
-                                )
+
+                                    val isSelected = selectedFiles.contains(file)
+
+                                    FileListItem(
+                                        icon = icon, iconBgColor = bg, iconColor = fg,
+                                        title = file.name, subtitle = subtitle,
+                                        isSelected = isSelected,
+                                        isSelectionMode = isSelectionMode,
+                                        onOptionsClick = {
+                                            focusManager.clearFocus()
+                                            if (!file.exists()) purgeGhostFile(file)
+                                            else {
+                                                selectedFileForOptions = file
+                                                showBottomSheet = true
+                                            }
+                                        },
+                                        onItemClick = {
+                                            focusManager.clearFocus()
+                                            if (!file.exists()) purgeGhostFile(file)
+                                            else if (isSelectionMode) {
+                                                selectedFiles = if (isSelected) selectedFiles - file else selectedFiles + file
+                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            } else if (file.isDirectory) {
+                                                changeDirectory(file)
+                                            } else {
+                                                openFileWithIntent(context, file)
+                                            }
+                                        },
+                                        onItemLongClick = {
+                                            focusManager.clearFocus()
+                                            if (!file.exists()) purgeGhostFile(file)
+                                            else {
+                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                selectedFiles = selectedFiles + file
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         }
-                        item { Spacer(modifier = Modifier.height(100.dp)) }
                     }
                 }
 
@@ -441,6 +472,40 @@ fun FileManagerScreen() {
                         )
                     }
                 }
+
+                // 2. THE STAGING BAR (Compact Premium UI)
+                FloatingMoveBar(
+                    stagedFile = stagedFileForMove,
+                    currentDir = currentDir,
+                    existingFiles = filesList,
+                    onCancel = { stagedFileForMove = null },
+                    onConfirmMove = { fileToMove ->
+                        val targetFile = File(currentDir, fileToMove.name)
+                        coroutineScope.launch(Dispatchers.IO) {
+                            var success = fileToMove.renameTo(targetFile)
+                            if (!success) {
+                                success = try {
+                                    fileToMove.copyRecursively(targetFile, overwrite = true)
+                                    fileToMove.deleteRecursively()
+                                } catch (e: Exception) {
+                                    false
+                                }
+                            }
+                            withContext(Dispatchers.Main) {
+                                if (success) {
+                                    stagedFileForMove = null
+                                    filesList = currentDir.listFiles()?.toList()
+                                        ?.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) }))
+                                        ?: emptyList()
+                                    snackbarHostState.showSnackbar("Moved successfully")
+                                } else {
+                                    snackbarHostState.showSnackbar("Failed to move file")
+                                }
+                            }
+                        }
+                    },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
             }
         }
     }
@@ -463,6 +528,11 @@ fun FileManagerScreen() {
                     renameError = ""
                     showBottomSheet = false
                     showRenameSheet = true
+                },
+                onMove = {
+                    stagedFileForMove = selectedFileForOptions
+                    searchQuery = "" // Clear search if moving from search results
+                    showBottomSheet = false
                 },
                 onDelete = {
                     val fileToDelete = selectedFileForOptions!!
@@ -560,7 +630,6 @@ fun FileManagerScreen() {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    // COMPLETELY REMOVED .imePadding() HERE
                     .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
             ) {
                 Text("Rename", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
@@ -763,7 +832,6 @@ fun CreateFolderBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                // COMPLETELY REMOVED .imePadding() HERE
                 .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
         ) {
             Text(
@@ -865,6 +933,135 @@ fun CreateFolderBottomSheet(
 }
 
 // -------------------------------------------------------------
+// UI COMPONENTS - PREMIUM COMPACT FLOATING BAR
+// -------------------------------------------------------------
+@Composable
+fun FloatingMoveBar(
+    stagedFile: File?,
+    currentDir: File,
+    existingFiles: List<File>,
+    onCancel: () -> Unit,
+    onConfirmMove: (File) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    // Cache the file so the exit animation has data to render when stagedFile becomes null
+    var lastStagedFile by remember { mutableStateOf(stagedFile) }
+    if (stagedFile != null) {
+        lastStagedFile = stagedFile
+    }
+
+    AnimatedVisibility(
+        visible = stagedFile != null,
+        enter = slideInVertically(
+            initialOffsetY = { it },
+            animationSpec = spring(dampingRatio = 0.8f, stiffness = 400f)
+        ) + fadeIn(),
+        exit = slideOutVertically(
+            targetOffsetY = { it },
+            animationSpec = spring(dampingRatio = 0.8f, stiffness = 400f)
+        ) + fadeOut(),
+        modifier = modifier
+    ) {
+        val fileToRender = stagedFile ?: lastStagedFile ?: return@AnimatedVisibility
+
+        // Dynamic State Validation using the cached file
+        val isAlreadyInCurrentDir = fileToRender.parentFile?.absolutePath == currentDir.absolutePath
+        val isTryingToMoveIntoSelf = fileToRender.isDirectory && currentDir.absolutePath.startsWith(fileToRender.absolutePath)
+        val nameCollision = existingFiles.any { it.name.equals(fileToRender.name, ignoreCase = true) }
+        val canMove = !isAlreadyInCurrentDir && !isTryingToMoveIntoSelf && !nameCollision
+
+        val (icon, bg, fg) = getFileIconAndColors(fileToRender)
+
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 16.dp)
+                .shadow(
+                    elevation = 8.dp,
+                    shape = RoundedCornerShape(20.dp),
+                    spotColor = Slate800.copy(alpha = 0.1f),
+                    ambientColor = Slate800.copy(alpha = 0.05f)
+                ),
+            shape = RoundedCornerShape(20.dp),
+            color = Color.White,
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // 1. File Icon Context
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(bg),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(20.dp))
+                }
+
+                // 2. Texts (Filename + Status)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = fileToRender.name,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = when {
+                            isAlreadyInCurrentDir -> "Already here"
+                            isTryingToMoveIntoSelf -> "Invalid location"
+                            nameCollision -> "Name conflict"
+                            else -> "To: ${currentDir.name}"
+                        },
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (canMove) TextSecondary else Red500,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                // 3. Compact Circular Cancel Button
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Slate100)
+                        .clickable { onCancel() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Cancel", tint = TextSecondary, modifier = Modifier.size(18.dp))
+                }
+
+                // 4. Pill-shaped Move Button
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(if (canMove) PrimaryBlue else Slate100)
+                        .clickable(enabled = canMove) { onConfirmMove(fileToRender) }
+                        .padding(horizontal = 18.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Move",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (canMove) Color.White else TextTertiary
+                    )
+                }
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
 // NATIVE INTENT ROUTING
 // -------------------------------------------------------------
 private fun openFileWithIntent(context: Context, file: File) {
@@ -959,9 +1156,8 @@ private fun getFileIconAndColors(file: File): Triple<ImageVector, Color, Color> 
 }
 
 // -------------------------------------------------------------
-// UI COMPONENTS
+// TOP BARS
 // -------------------------------------------------------------
-
 @Composable
 fun FileManagerTopBar(
     showAddFolder: Boolean = true,
@@ -1165,6 +1361,7 @@ fun FileOptionsDrawerContent(
     file: File,
     onDismiss: () -> Unit,
     onRename: () -> Unit,
+    onMove: () -> Unit,
     onDelete: () -> Unit
 ) {
     val (icon, bg, fg) = getFileIconAndColors(file)
@@ -1186,7 +1383,7 @@ fun FileOptionsDrawerContent(
         Spacer(modifier = Modifier.height(8.dp))
 
         DrawerActionItem(icon = Icons.Outlined.Edit, title = "Rename", color = Slate800, iconColor = Slate600, onClick = onRename)
-        DrawerActionItem(icon = Icons.Outlined.OpenWith, title = "Move", color = Slate800, iconColor = Slate600, onClick = { onDismiss() })
+        DrawerActionItem(icon = Icons.Outlined.DriveFileMove, title = "Move", color = Slate800, iconColor = Slate600, onClick = onMove)
         DrawerActionItem(icon = Icons.Outlined.DeleteOutline, title = "Delete", color = Red500, iconColor = Red500, onClick = onDelete)
     }
 }
