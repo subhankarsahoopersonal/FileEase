@@ -211,7 +211,6 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
                     val memorySetting = MemoryUsageSetting.setupMixed(50 * 1024 * 1024)
                     merger.mergeDocuments(memorySetting)
 
-                    // Inject Table of Contents (Bookmarks) if enabled
                     if (addToc) {
                         try {
                             PDDocument.load(outputFile, memorySetting).use { document ->
@@ -220,17 +219,14 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
 
                                 var currentPageIndex = 0
                                 fileList.forEach { item ->
-                                    // Ensure we don't map to a non-existent page if parsing was slightly off
                                     if (currentPageIndex < document.numberOfPages && item.pages > 0) {
                                         val targetPage = document.getPage(currentPageIndex)
-
-                                        // Use FitWidth so clicking the bookmark beautifully fits the page to the screen
                                         val destination = PDPageFitWidthDestination().apply {
                                             page = targetPage
                                         }
 
                                         val outlineItem = PDOutlineItem().apply {
-                                            title = item.name.replace("(?i)\\.pdf$".toRegex(), "") // Clean .pdf extension from bookmark
+                                            title = item.name.replace("(?i)\\.pdf$".toRegex(), "")
                                             this.destination = destination
                                         }
 
@@ -238,12 +234,11 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
                                         currentPageIndex += item.pages
                                     }
                                 }
-                                outline.openNode() // Expands the bookmark tree by default
+                                outline.openNode()
                                 document.save(outputFile)
                             }
                         } catch (e: Exception) {
                             e.printStackTrace()
-                            // Failsafe: if ToC injection fails, the base merged file still exists securely.
                         }
                     }
 
@@ -277,6 +272,9 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
     }
 
     Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Surface),
         containerColor = Surface,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = { MergeTopBar(onNavigateBack) },
@@ -293,6 +291,7 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(Surface)
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
         ) {
@@ -332,7 +331,8 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
             SecurityBadge()
 
-            Spacer(modifier = Modifier.height(32.dp))
+            // Expanded clearance to prevent the security badge from hiding behind the new taller bottom bar
+            Spacer(modifier = Modifier.height(112.dp))
         }
     }
 }
@@ -799,8 +799,9 @@ private fun MergeBottomBar(isMerging: Boolean, fileCount: Int, canMerge: Boolean
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.9f))
             .shadow(elevation = 16.dp, spotColor = Color.Black.copy(alpha = 0.06f))
+            .background(SurfaceContainerLowest.copy(alpha = 0.9f))
+            .navigationBarsPadding() // FIX: Forces the inner contents to respect the system gesture pill
     ) {
         if (isMerging) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = Primary, trackColor = SurfaceContainerHigh)

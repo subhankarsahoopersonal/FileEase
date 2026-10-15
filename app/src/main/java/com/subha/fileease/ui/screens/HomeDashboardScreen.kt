@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,7 +42,6 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-// Exact colors from the Stitch HTML file
 val BgColor = Color(0xFFF8FAFC)
 val SurfaceColor = Color(0xFFFFFFFF)
 val PrimaryBlue = Color(0xFF0066FF)
@@ -55,7 +55,6 @@ val Red50 = Color(0xFFFEF2F2)
 val Emerald500 = Color(0xFF10B981)
 val Emerald50 = Color(0xFFECFDF5)
 
-// Enums and Data Class for Real Files
 enum class ActivityIconType { PDF, IMAGE, DOC }
 data class RecentActivityData(
     val title: String,
@@ -66,7 +65,6 @@ data class RecentActivityData(
 
 @Composable
 fun HomeDashboardScreen(
-    // Added navigation callbacks to make the dashboard functional
     onMergeClick: () -> Unit = {},
     onSplitClick: () -> Unit = {},
     onCompressClick: () -> Unit = {},
@@ -75,7 +73,6 @@ fun HomeDashboardScreen(
 ) {
     val context = LocalContext.current
 
-    // 1. Hoist the permission state so BOTH sections can react to it instantly
     var hasStoragePermission by remember {
         mutableStateOf(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -86,7 +83,6 @@ fun HomeDashboardScreen(
         )
     }
 
-    // Launcher for modern Android (Android 11+)
     val settingsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
@@ -97,14 +93,12 @@ fun HomeDashboardScreen(
         }
     }
 
-    // Launcher for old Android (Android 10 and below)
     val legacyLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         hasStoragePermission = isGranted
     }
 
-    // The function that runs when you tap "Tap to Sync"
     val requestPermission = {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
@@ -145,11 +139,9 @@ fun HomeDashboardScreen(
             )
 
             Spacer(modifier = Modifier.height(24.dp))
-            // Pass the permission down to Storage
             DeviceStorageSection(hasStoragePermission, requestPermission)
 
             Spacer(modifier = Modifier.height(24.dp))
-            // Pass the permission down to Recent Activity
             RecentActivitySection(hasStoragePermission)
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -167,7 +159,6 @@ fun DashboardTopBar() {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Logo & App Name
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
@@ -192,7 +183,6 @@ fun DashboardTopBar() {
             )
         }
 
-        // Notifications & Avatar
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
@@ -207,7 +197,6 @@ fun DashboardTopBar() {
                     tint = TextSecondary,
                     modifier = Modifier.size(24.dp)
                 )
-                // Red Dot Indicator
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -307,7 +296,6 @@ fun QuickActionsSection(
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // 1. Images to PDF (Active) - Added onClick callback
             Column(
                 modifier = Modifier
                     .width(84.dp)
@@ -368,39 +356,45 @@ fun QuickActionCard(icon: ImageVector, title: String, onClick: () -> Unit) {
 @Composable
 fun DeviceStorageSection(hasStoragePermission: Boolean, onRequestPermission: () -> Unit) {
     val context = LocalContext.current
-    var totalGb by remember { mutableStateOf(128f) }
-    var usedGb by remember { mutableStateOf(0f) }
-    var docsGb by remember { mutableStateOf(0f) }
-    var othersGb by remember { mutableStateOf(0f) }
-    var progress by remember { mutableStateOf(0f) }
 
-    // Fetch real storage stats asynchronously when UI loads or permission changes
+    // PERFORMANCE FIX: Cache calculation across tab navigation using rememberSaveable
+    var totalGb by rememberSaveable { mutableStateOf(128f) }
+    var usedGb by rememberSaveable { mutableStateOf(0f) }
+    var docsGb by rememberSaveable { mutableStateOf(0f) }
+    var othersGb by rememberSaveable { mutableStateOf(0f) }
+    var progress by rememberSaveable { mutableStateOf(0f) }
+    var isDataLoaded by rememberSaveable { mutableStateOf(false) }
+
     LaunchedEffect(hasStoragePermission) {
-        withContext(Dispatchers.IO) {
-            try {
-                val stat = StatFs(Environment.getDataDirectory().path)
-                val totalBytes = stat.totalBytes
-                val availableBytes = stat.availableBytes
-                val usedBytes = totalBytes - availableBytes
+        // Only run the heavy I/O if the data hasn't been loaded yet to prevent navigation lag
+        if (!isDataLoaded) {
+            withContext(Dispatchers.IO) {
+                try {
+                    val stat = StatFs(Environment.getDataDirectory().path)
+                    val totalBytes = stat.totalBytes
+                    val availableBytes = stat.availableBytes
+                    val usedBytes = totalBytes - availableBytes
 
-                val gigabyte = 1_000_000_000f
-                val tGb = totalBytes / gigabyte
-                val uGb = usedBytes / gigabyte
+                    val gigabyte = 1_000_000_000f
+                    val tGb = totalBytes / gigabyte
+                    val uGb = usedBytes / gigabyte
 
-                totalGb = tGb
-                usedGb = uGb
-                progress = if (tGb > 0) uGb / tGb else 0f
+                    totalGb = tGb
+                    usedGb = uGb
+                    progress = if (tGb > 0) uGb / tGb else 0f
 
-                if (hasStoragePermission) {
-                    val realDocsBytes = getRealDocumentsSize(context)
-                    docsGb = realDocsBytes / gigabyte
-                    othersGb = maxOf(0f, uGb - docsGb)
-                } else {
-                    docsGb = 0f
-                    othersGb = uGb
+                    if (hasStoragePermission) {
+                        val realDocsBytes = getRealDocumentsSize(context)
+                        docsGb = realDocsBytes / gigabyte
+                        othersGb = maxOf(0f, uGb - docsGb)
+                        isDataLoaded = true
+                    } else {
+                        docsGb = 0f
+                        othersGb = uGb
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
         }
     }
@@ -410,7 +404,6 @@ fun DeviceStorageSection(hasStoragePermission: Boolean, onRequestPermission: () 
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(Brush.linearGradient(listOf(Color(0xFF1E60F2), Color(0xFF3B82F6), Color(0xFF60A5FA))))
-            // Make the whole card clickable as a fallback
             .clickable(enabled = !hasStoragePermission) { onRequestPermission() }
             .padding(20.dp)
     ) {
@@ -488,12 +481,13 @@ fun DeviceStorageSection(hasStoragePermission: Boolean, onRequestPermission: () 
 fun RecentActivitySection(hasStoragePermission: Boolean) {
     val context = LocalContext.current
     var recentFiles by remember { mutableStateOf<List<RecentActivityData>>(emptyList()) }
+    var isFilesLoaded by rememberSaveable { mutableStateOf(false) }
 
-    // Fetch the 3 newest files whenever permission is granted
     LaunchedEffect(hasStoragePermission) {
-        if (hasStoragePermission) {
+        if (hasStoragePermission && !isFilesLoaded) {
             withContext(Dispatchers.IO) {
                 recentFiles = getRecentDeviceFiles(context)
+                isFilesLoaded = true
             }
         }
     }
@@ -530,7 +524,6 @@ fun RecentActivitySection(hasStoragePermission: Boolean) {
 
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (!hasStoragePermission) {
-                // Keep showing dummy design if permissions aren't granted yet
                 ActivityItem(
                     icon = Icons.Outlined.PictureAsPdf,
                     iconBgColor = Red50,
@@ -555,10 +548,9 @@ fun RecentActivitySection(hasStoragePermission: Boolean) {
                     subtitle = "Compressed • Yesterday",
                     size = "890 KB"
                 )
-            } else if (recentFiles.isEmpty()) {
+            } else if (recentFiles.isEmpty() && isFilesLoaded) {
                 Text("No recent files found", color = TextTertiary, fontSize = 13.sp, modifier = Modifier.padding(14.dp))
             } else {
-                // Render the REAL files from the device
                 recentFiles.forEach { file ->
                     val icon = when (file.iconType) {
                         ActivityIconType.PDF -> Icons.Outlined.PictureAsPdf
@@ -643,16 +635,11 @@ fun ActivityItem(
     }
 }
 
-// ---------------------------------------------------------
-// ANDROID NATIVE HELPER FUNCTIONS (MEDIA STORE QUERIES)
-// ---------------------------------------------------------
-
 private fun getRealDocumentsSize(context: Context): Long {
     var totalSize = 0L
     try {
         val collection = MediaStore.Files.getContentUri("external")
         val projection = arrayOf(MediaStore.Files.FileColumns.SIZE)
-        // MEDIA_TYPE_DOCUMENT includes PDFs, TXT, DOCX, etc.
         val selection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?"
         val selectionArgs = arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_DOCUMENT.toString())
 
@@ -684,7 +671,6 @@ private fun getRecentDeviceFiles(context: Context): List<RecentActivityData> {
             MediaStore.Files.FileColumns.DATE_MODIFIED,
             MediaStore.Files.FileColumns.MIME_TYPE
         )
-        // Sort by newest modified
         val sortOrder = "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC"
 
         context.contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
@@ -700,17 +686,14 @@ private fun getRecentDeviceFiles(context: Context): List<RecentActivityData> {
                 val dateSecs = cursor.getLong(dateCol)
                 val mime = cursor.getString(mimeCol) ?: ""
 
-                // Skip empty directories or 0 byte ghost files
                 if (sizeBytes == 0L) continue
 
-                // 1. Format Size
                 val sizeStr = if (sizeBytes > 1024 * 1024) {
                     "%.1f MB".format(sizeBytes / (1024f * 1024f))
                 } else {
                     "${sizeBytes / 1024} KB"
                 }
 
-                // 2. Format Time
                 val nowSecs = System.currentTimeMillis() / 1000
                 val diff = nowSecs - dateSecs
                 val timeStr = when {
@@ -721,7 +704,6 @@ private fun getRecentDeviceFiles(context: Context): List<RecentActivityData> {
                     else -> "${diff / 86400} days ago"
                 }
 
-                // 3. Determine Icon Theme based on extension/mime
                 val iconType = when {
                     mime.contains("pdf", true) || name.endsWith(".pdf", true) -> ActivityIconType.PDF
                     mime.contains("image", true) || name.endsWith(".jpg", true) || name.endsWith(".png", true) -> ActivityIconType.IMAGE
