@@ -44,10 +44,25 @@ fun MainScreen() {
     // Detect if the software keyboard is actively open
     val isKeyboardVisible = WindowInsets.isImeVisible
 
+    // Track current route to hide bottom bar on sub-screens
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+
+    // Define which screens are allowed to show the bottom navigation bar
+    val topLevelRoutes = listOf(
+        BottomNavItem.Home.route,
+        BottomNavItem.Files.route,
+        BottomNavItem.PdfTools.route,
+        BottomNavItem.ImageTools.route
+    )
+
+    // Bar is visible only if keyboard is hidden AND we are on a top-level tab
+    val isBottomBarVisible = !isKeyboardVisible && currentRoute in topLevelRoutes
+
     Scaffold(
         bottomBar = {
             AnimatedVisibility(
-                visible = !isKeyboardVisible,
+                visible = isBottomBarVisible,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                 exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
             ) {
@@ -148,7 +163,7 @@ fun BottomNavigationBar(navController: NavHostController) {
     NavigationBar(
         containerColor = Color.White,
         contentColor = Color(0xFF0F172A),
-        tonalElevation = 0.dp // <-- FIX 1: This completely removes that unnecessary floating line
+        tonalElevation = 0.dp
     ) {
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route

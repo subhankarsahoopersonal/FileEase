@@ -209,7 +209,6 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
 
                     withContext(Dispatchers.Main) {
                         fileList = emptyList()
-                        // Phase 3: Actionable Snackbar Hand-off
                         val result = snackbarHostState.showSnackbar(
                             message = "Success! Saved to Downloads",
                             actionLabel = "OPEN",
@@ -248,7 +247,8 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
                 canMerge = fileList.size >= 2 && fileList.none { it.isEncrypted },
                 onMergeClick = { executeMerge() }
             )
-        }
+        },
+        contentWindowInsets = WindowInsets(0.dp) // Prevent nested Scaffold double-padding
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -302,8 +302,8 @@ private fun MergeTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.9f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
+            .background(SurfaceContainerLowest.copy(alpha = 0.9f))
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -464,14 +464,14 @@ private fun PdfFileCard(
             .shadow(elevation = elevation, shape = RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.05f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(12.dp)
-            .alpha(if (isMerging) 0.6f else 1f), // Dim cards while merging
+            .alpha(if (isMerging) 0.6f else 1f),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
                 .size(32.dp)
                 .pointerInput(isMerging) {
-                    if (!isMerging) { // Disable drag while merging
+                    if (!isMerging) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
                             onDrag = { change, dragAmount ->
@@ -609,7 +609,6 @@ private fun OutputConfiguration(
     addToc: Boolean, onTocToggle: () -> Unit,
     normalizeSize: Boolean, onNormalizeToggle: () -> Unit
 ) {
-    // Phase 3: Granular UI Pulse effect while merging
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseAlpha = if (isMerging) {
         infiniteTransition.animateFloat(
@@ -654,7 +653,7 @@ private fun OutputConfiguration(
                         .clip(RoundedCornerShape(12.dp))
                         .background(SurfaceContainerLow)
                         .padding(horizontal = 12.dp, vertical = 12.dp)
-                        .alpha(pulseAlpha), // Animates to simulate writing state
+                        .alpha(pulseAlpha),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(Icons.Outlined.EditNote, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
@@ -764,7 +763,6 @@ private fun MergeBottomBar(isMerging: Boolean, fileCount: Int, canMerge: Boolean
             .shadow(elevation = 16.dp, spotColor = Color.Black.copy(alpha = 0.06f))
     ) {
         if (isMerging) {
-            // Phase 3: Indeterminate progress indicator running across the top of the bar
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = Primary, trackColor = SurfaceContainerHigh)
         }
 
