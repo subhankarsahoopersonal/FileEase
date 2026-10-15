@@ -1,14 +1,23 @@
 package com.subha.fileease.ui.screens
 
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Environment
+import android.os.StatFs
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -25,19 +34,30 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import androidx.core.content.FileProvider
 import com.tom_roush.pdfbox.multipdf.PDFMergerUtility
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
+import kotlin.math.roundToInt
 
-// Exact color tokens from the provided Stitch HTML Tailwind config
+// Exact color tokens
 private val Surface = Color(0xFFFAF8FF)
 private val SurfaceContainerLowest = Color(0xFFFFFFFF)
 private val SurfaceContainerLow = Color(0xFFF2F3FF)
@@ -58,29 +78,73 @@ private val ErrorContainer = Color(0xFFFFDAD6)
 private val OutlineVariant = Color(0xFFC2C6D8)
 private val Outline = Color(0xFF727687)
 
-// Updated data class to hold the actual URI of the selected file
 data class PdfFileItem(
-    val id: Int,
+    val id: String = UUID.randomUUID().toString(),
     val name: String,
-    val pages: Int, // Placeholder for future PDFBox page counting
+    val pages: Int,
     val sizeMb: Double,
-    val uri: Uri
+    val uri: Uri,
+    val thumbnail: Bitmap? = null,
+    val isEncrypted: Boolean = false,
+    val isProcessed: Boolean = false
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PdfMergeScreen(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // State Management for the UI
     var fileList by remember { mutableStateOf<List<PdfFileItem>>(emptyList()) }
     var outputName by remember { mutableStateOf("Merged_Document.pdf") }
     var addToc by remember { mutableStateOf(true) }
     var normalizeSize by remember { mutableStateOf(false) }
     var isMerging by remember { mutableStateOf(false) }
 
-    // Native Android File Picker configured strictly for PDFs
+    // Async Thumbnail & Page Parsing Worker
+    LaunchedEffect(fileList) {
+        val unprocessed = fileList.filter { !it.isProcessed }
+        if (unprocessed.isNotEmpty()) {
+            coroutineScope.launch(Dispatchers.IO) {
+                unprocessed.forEach { file ->
+                    var pageCount = 0
+                    var bitmap: Bitmap? = null
+                    var encrypted = false
+
+                    try {
+                        context.contentResolver.openFileDescriptor(file.uri, "r")?.use { fd ->
+                            val renderer = PdfRenderer(fd)
+                            pageCount = renderer.pageCount
+                            if (pageCount > 0) {
+                                val page = renderer.openPage(0)
+                                val width = 200
+                                val height = (width * page.height) / page.width
+                                bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                                bitmap.eraseColor(android.graphics.Color.WHITE)
+                                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                page.close()
+                            }
+                            renderer.close()
+                        }
+                    } catch (e: SecurityException) {
+                        encrypted = true
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        fileList = fileList.map {
+                            if (it.id == file.id) {
+                                it.copy(pages = pageCount, thumbnail = bitmap, isEncrypted = encrypted, isProcessed = true)
+                            } else it
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
@@ -96,9 +160,8 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
                     val sizeMb = sizeBytes / (1024.0 * 1024.0)
 
                     PdfFileItem(
-                        id = uri.hashCode(),
                         name = name,
-                        pages = 0, // Set to 0 for instant load; page parsing can be added later if needed
+                        pages = 0,
                         sizeMb = Math.round(sizeMb * 100.0) / 100.0,
                         uri = uri
                     )
@@ -110,36 +173,47 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
         }
     }
 
-    // PDF Merge Execution Engine
     val executeMerge = {
-        if (fileList.size < 2) {
-            coroutineScope.launch { snackbarHostState.showSnackbar("Please select at least 2 PDFs to merge.") }
+        val totalSizeMb = fileList.sumOf { it.sizeMb }
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val stat = StatFs(downloadsDir.path)
+        val availableMb = (stat.availableBlocksLong * stat.blockSizeLong) / (1024.0 * 1024.0)
+
+        if (totalSizeMb > availableMb) {
+            coroutineScope.launch { snackbarHostState.showSnackbar("Not enough storage space available.") }
         } else {
             coroutineScope.launch(Dispatchers.IO) {
                 isMerging = true
                 try {
                     val merger = PDFMergerUtility()
-
-                    // Route the final file to the user's public Downloads directory
-                    val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                     val finalFileName = if (outputName.endsWith(".pdf", ignoreCase = true)) outputName else "$outputName.pdf"
                     val outputFile = File(downloadsDir, finalFileName)
 
                     merger.destinationFileName = outputFile.absolutePath
 
-                    // Feed each selected file into the engine
                     fileList.forEach { item ->
                         context.contentResolver.openInputStream(item.uri)?.let { inputStream ->
                             merger.addSource(inputStream)
                         }
                     }
 
-                    // Execute the merge on the device memory
                     merger.mergeDocuments(null)
 
                     withContext(Dispatchers.Main) {
-                        snackbarHostState.showSnackbar("Success! Saved to Downloads: ${outputFile.name}")
-                        fileList = emptyList() // Clear queue on success
+                        fileList = emptyList()
+                        val result = snackbarHostState.showSnackbar(
+                            message = "Success! Saved to Downloads",
+                            actionLabel = "OPEN",
+                            duration = SnackbarDuration.Long
+                        )
+                        if (result == SnackbarResult.ActionPerformed) {
+                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", outputFile)
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "application/pdf")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Open PDF"))
+                        }
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
@@ -159,7 +233,11 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = { MergeTopBar(onNavigateBack) },
         bottomBar = {
-            MergeBottomBar(isMerging = isMerging, onMergeClick = { executeMerge() })
+            MergeBottomBar(
+                isMerging = isMerging,
+                canMerge = fileList.size >= 2 && fileList.none { it.isEncrypted },
+                onMergeClick = { executeMerge() }
+            )
         }
     ) { innerPadding ->
         Column(
@@ -171,11 +249,19 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
 
             FileQueueSection(
+                // FIX 1: Elevate Z-Index here so dragged cards render OVER the SummaryStrip below
+                modifier = Modifier.zIndex(1f),
                 files = fileList,
                 onClearAll = { fileList = emptyList() },
                 onAddMore = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
                 onRemove = { fileToRemove ->
                     fileList = fileList.filter { it.id != fileToRemove.id }
+                },
+                onSwap = { from, to ->
+                    val mutableList = fileList.toMutableList()
+                    val item = mutableList.removeAt(from)
+                    mutableList.add(to, item)
+                    fileList = mutableList
                 }
             )
 
@@ -231,12 +317,14 @@ private fun MergeTopBar(onNavigateBack: () -> Unit) {
 
 @Composable
 private fun FileQueueSection(
+    modifier: Modifier = Modifier,
     files: List<PdfFileItem>,
     onClearAll: () -> Unit,
     onAddMore: () -> Unit,
-    onRemove: (PdfFileItem) -> Unit
+    onRemove: (PdfFileItem) -> Unit,
+    onSwap: (Int, Int) -> Unit
 ) {
-    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+    Column(modifier = modifier.padding(horizontal = 16.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -254,12 +342,14 @@ private fun FileQueueSection(
                     Text("${files.size}", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
                 }
             }
-            Text(
-                text = "Clear All",
-                fontSize = 11.sp,
-                color = Primary,
-                modifier = Modifier.clickable { onClearAll() }
-            )
+            if (files.isNotEmpty()) {
+                Text(
+                    text = "Clear All",
+                    fontSize = 11.sp,
+                    color = Primary,
+                    modifier = Modifier.clickable { onClearAll() }
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -287,9 +377,22 @@ private fun FileQueueSection(
                 }
             }
         } else {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // FIX 2: Elevate Z-Index here so dragged cards render OVER the "Add More PDFs" button
+            Column(
+                modifier = Modifier.zIndex(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 files.forEachIndexed { index, file ->
-                    PdfFileCard(file, index + 1) { onRemove(file) }
+                    key(file.id) {
+                        PdfFileCard(
+                            file = file,
+                            order = index + 1,
+                            isLast = index == files.lastIndex,
+                            onRemove = { onRemove(file) },
+                            onSwapUp = { if (index > 0) onSwap(index, index - 1) },
+                            onSwapDown = { if (index < files.lastIndex) onSwap(index, index + 1) }
+                        )
+                    }
                 }
             }
 
@@ -317,51 +420,131 @@ private fun FileQueueSection(
 }
 
 @Composable
-private fun PdfFileCard(file: PdfFileItem, order: Int, onRemove: () -> Unit) {
+private fun PdfFileCard(
+    file: PdfFileItem,
+    order: Int,
+    isLast: Boolean,
+    onRemove: () -> Unit,
+    onSwapUp: () -> Unit,
+    onSwapDown: () -> Unit
+) {
+    val haptics = LocalHapticFeedback.current
+    var dragOffsetY by remember { mutableStateOf(0f) }
+
+    val currentOnSwapUp by rememberUpdatedState(onSwapUp)
+    val currentOnSwapDown by rememberUpdatedState(onSwapDown)
+    val currentIsLast by rememberUpdatedState(isLast)
+    val currentOrder by rememberUpdatedState(order)
+
+    val density = LocalDensity.current
+    val cardHeightPx = remember(density) { with(density) { 80.dp.toPx() } }
+    val swapThresholdPx = cardHeightPx * 0.65f
+
+    val isDragging = dragOffsetY != 0f
+    val elevation by animateDpAsState(targetValue = if (isDragging) 8.dp else 1.dp, label = "card_elevation")
+
     Row(
         modifier = Modifier
+            .zIndex(if (isDragging) 1f else 0f)
+            .offset { IntOffset(0, dragOffsetY.roundToInt()) }
             .fillMaxWidth()
-            .shadow(elevation = 1.dp, shape = RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.05f))
+            .shadow(elevation = elevation, shape = RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.05f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Outlined.DragIndicator, contentDescription = "Drag", tint = OutlineVariant, modifier = Modifier.size(20.dp))
-        Spacer(modifier = Modifier.width(12.dp))
-
         Box(
-            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(ErrorContainer.copy(alpha = 0.6f)),
+            modifier = Modifier
+                .size(32.dp)
+                .pointerInput(Unit) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+
+                            // FIX 3: Apply boundary clamping. Card hits a physical "wall"
+                            // preventing it from being dragged out of the list infinitely.
+                            val topLimit = if (currentOrder == 1) -cardHeightPx * 0.15f else -Float.MAX_VALUE
+                            val bottomLimit = if (currentIsLast) cardHeightPx * 0.15f else Float.MAX_VALUE
+
+                            dragOffsetY = (dragOffsetY + dragAmount.y).coerceIn(topLimit, bottomLimit)
+
+                            if (dragOffsetY > swapThresholdPx && !currentIsLast) {
+                                currentOnSwapDown()
+                                dragOffsetY -= cardHeightPx
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            } else if (dragOffsetY < -swapThresholdPx && currentOrder > 1) {
+                                currentOnSwapUp()
+                                dragOffsetY += cardHeightPx
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                        },
+                        onDragEnd = { dragOffsetY = 0f },
+                        onDragCancel = { dragOffsetY = 0f }
+                    )
+                },
             contentAlignment = Alignment.Center
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Outlined.Description, contentDescription = null, tint = Error, modifier = Modifier.size(20.dp))
-                Text("PDF", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Error)
+            Icon(Icons.Outlined.DragIndicator, contentDescription = "Drag to reorder", tint = OutlineVariant, modifier = Modifier.size(24.dp))
+        }
+
+        Spacer(modifier = Modifier.width(8.dp))
+
+        Box(
+            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(if (file.isEncrypted) ErrorContainer.copy(alpha = 0.6f) else SurfaceContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            if (file.isEncrypted) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Outlined.Lock, contentDescription = null, tint = Error, modifier = Modifier.size(20.dp))
+                }
+            } else if (file.thumbnail != null) {
+                Image(
+                    bitmap = file.thumbnail.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Primary, strokeWidth = 2.dp)
             }
         }
 
         Spacer(modifier = Modifier.width(12.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            Text(file.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(file.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = if (file.isEncrypted) Error else OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("${file.sizeMb} MB", fontSize = 12.sp, color = OnSurfaceVariant)
-                Spacer(modifier = Modifier.width(6.dp))
-                Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
-                Spacer(modifier = Modifier.width(6.dp))
-                Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(SurfaceContainer).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                    Text("Order #$order", fontSize = 9.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                if (file.isEncrypted) {
+                    Text("Encrypted - Cannot Merge", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Error)
+                } else {
+                    if (file.isProcessed) {
+                        Text("${file.pages} pages", fontSize = 12.sp, color = OnSurfaceVariant)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    Text("${file.sizeMb} MB", fontSize = 12.sp, color = OnSurfaceVariant)
                 }
             }
         }
 
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .clickable { onRemove() },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Outlined.Delete, contentDescription = "Remove", tint = Outline, modifier = Modifier.size(19.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.Center) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { onRemove() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Outlined.Delete, contentDescription = "Remove", tint = Outline, modifier = Modifier.size(20.dp))
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(SurfaceContainer).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                Text("#$order", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Primary)
+            }
         }
     }
 }
@@ -369,6 +552,7 @@ private fun PdfFileCard(file: PdfFileItem, order: Int, onRemove: () -> Unit) {
 @Composable
 private fun SummaryStrip(files: List<PdfFileItem>) {
     val totalSize = files.sumOf { it.sizeMb }
+    val totalPages = files.sumOf { it.pages }
 
     Box(modifier = Modifier.padding(horizontal = 16.dp)) {
         Row(
@@ -390,7 +574,7 @@ private fun SummaryStrip(files: List<PdfFileItem>) {
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text("QUEUE ESTIMATION", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = OnPrimaryContainer.copy(alpha = 0.9f))
-                    Text("${files.size} files · ~${"%.1f".format(totalSize)} MB total", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                    Text("${files.size} files · $totalPages pages · ~${"%.1f".format(totalSize)} MB", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
                 }
             }
             Box(
@@ -470,28 +654,6 @@ private fun OutputConfiguration(
             isChecked = normalizeSize,
             onToggle = onNormalizeToggle
         )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(SurfaceContainerLow)
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Tune, contentDescription = null, tint = Secondary, modifier = Modifier.size(20.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Column {
-                    Text("Compression Level", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                    Text("Smart Balanced (Recommended)", fontSize = 12.sp, color = OnSurfaceVariant)
-                }
-            }
-            Text("Standard", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Primary)
-        }
     }
 }
 
@@ -513,8 +675,7 @@ private fun CustomToggleRow(icon: androidx.compose.ui.graphics.vector.ImageVecto
             }
         }
 
-        // Custom Pill Switch
-        val offset by animateFloatAsState(targetValue = if (isChecked) 20f else 0f)
+        val offset by animateFloatAsState(targetValue = if (isChecked) 20f else 0f, label = "")
         val bgColor = if (isChecked) Primary else SurfaceContainerHighest
 
         Box(
@@ -551,32 +712,34 @@ private fun SecurityBadge() {
 }
 
 @Composable
-private fun MergeBottomBar(isMerging: Boolean, onMergeClick: () -> Unit) {
+private fun MergeBottomBar(isMerging: Boolean, canMerge: Boolean, onMergeClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(SurfaceContainerLowest.copy(alpha = 0.9f))
             .shadow(elevation = 16.dp, spotColor = Color.Black.copy(alpha = 0.06f))
-            .padding(horizontal = 16.dp, vertical = 16.dp)
     ) {
+        if (isMerging) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = Primary, trackColor = SurfaceContainerHigh)
+        }
+
         Box(
             modifier = Modifier
+                .padding(horizontal = 16.dp, vertical = 16.dp)
                 .fillMaxWidth()
                 .height(48.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(if (isMerging) Primary else PrimaryContainer)
-                .clickable(enabled = !isMerging) { onMergeClick() },
+                .background(if (canMerge) (if (isMerging) Primary else PrimaryContainer) else SurfaceContainerHigh)
+                .clickable(enabled = canMerge && !isMerging) { onMergeClick() },
             contentAlignment = Alignment.Center
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isMerging) {
-                    CircularProgressIndicator(color = OnPrimary, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Merging documents...", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnPrimary)
+                    Text("Processing documents...", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnPrimary)
                 } else {
-                    Icon(Icons.Outlined.MergeType, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Outlined.MergeType, contentDescription = null, tint = if (canMerge) OnPrimary else OutlineVariant, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Merge & Save PDF", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnPrimary)
+                    Text("Merge & Save PDF", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = if (canMerge) OnPrimary else OutlineVariant)
                 }
             }
         }
