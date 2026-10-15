@@ -58,6 +58,10 @@ import androidx.compose.ui.zIndex
 import androidx.core.content.FileProvider
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.multipdf.PDFMergerUtility
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageFitWidthDestination
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -207,6 +211,42 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
                     val memorySetting = MemoryUsageSetting.setupMixed(50 * 1024 * 1024)
                     merger.mergeDocuments(memorySetting)
 
+                    // Inject Table of Contents (Bookmarks) if enabled
+                    if (addToc) {
+                        try {
+                            PDDocument.load(outputFile, memorySetting).use { document ->
+                                val outline = PDDocumentOutline()
+                                document.documentCatalog.documentOutline = outline
+
+                                var currentPageIndex = 0
+                                fileList.forEach { item ->
+                                    // Ensure we don't map to a non-existent page if parsing was slightly off
+                                    if (currentPageIndex < document.numberOfPages && item.pages > 0) {
+                                        val targetPage = document.getPage(currentPageIndex)
+
+                                        // Use FitWidth so clicking the bookmark beautifully fits the page to the screen
+                                        val destination = PDPageFitWidthDestination().apply {
+                                            page = targetPage
+                                        }
+
+                                        val outlineItem = PDOutlineItem().apply {
+                                            title = item.name.replace("(?i)\\.pdf$".toRegex(), "") // Clean .pdf extension from bookmark
+                                            this.destination = destination
+                                        }
+
+                                        outline.addLast(outlineItem)
+                                        currentPageIndex += item.pages
+                                    }
+                                }
+                                outline.openNode() // Expands the bookmark tree by default
+                                document.save(outputFile)
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            // Failsafe: if ToC injection fails, the base merged file still exists securely.
+                        }
+                    }
+
                     withContext(Dispatchers.Main) {
                         fileList = emptyList()
                         val result = snackbarHostState.showSnackbar(
@@ -248,7 +288,7 @@ fun PdfMergeScreen(onNavigateBack: () -> Unit) {
                 onMergeClick = { executeMerge() }
             )
         },
-        contentWindowInsets = WindowInsets(0.dp) // Prevent nested Scaffold double-padding
+        contentWindowInsets = WindowInsets(0.dp)
     ) { innerPadding ->
         Column(
             modifier = Modifier
