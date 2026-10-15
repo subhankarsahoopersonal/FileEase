@@ -311,7 +311,8 @@ fun FileManagerScreen() {
                 }
             }
         },
-        containerColor = BgColor
+        containerColor = BgColor,
+        contentWindowInsets = WindowInsets(0.dp)
     ) { innerPadding ->
         Column(
             modifier = Modifier

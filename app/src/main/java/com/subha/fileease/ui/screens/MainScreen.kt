@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -45,8 +46,6 @@ fun MainScreen() {
 
     Scaffold(
         bottomBar = {
-            // FIX: Use AnimatedVisibility to eliminate layout recalculation delays.
-            // This will smoothly slide the bar down into the floor, and slide it back up instantly.
             AnimatedVisibility(
                 visible = !isKeyboardVisible,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
@@ -148,7 +147,8 @@ fun BottomNavigationBar(navController: NavHostController) {
 
     NavigationBar(
         containerColor = Color.White,
-        contentColor = Color(0xFF0F172A)
+        contentColor = Color(0xFF0F172A),
+        tonalElevation = 0.dp // <-- FIX 1: This completely removes that unnecessary floating line
     ) {
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route
@@ -165,9 +165,6 @@ fun BottomNavigationBar(navController: NavHostController) {
                                 popUpTo(route) { saveState = true }
                             }
                             launchSingleTop = true
-
-                            // If the user taps the Home tab, don't restore deep links.
-                            // This ensures it strictly drops them on the clean HomeDashboardScreen.
                             restoreState = item.route != BottomNavItem.Home.route
                         }
                     }
