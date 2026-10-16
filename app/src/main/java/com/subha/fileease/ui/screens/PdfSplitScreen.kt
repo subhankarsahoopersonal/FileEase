@@ -378,21 +378,19 @@ private fun SplitTopBar(onNavigateBack: () -> Unit) {
             Box(
                 modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
                 contentAlignment = Alignment.Center
-            ) { Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface) }
-            Spacer(modifier = Modifier.width(4.dp))
-            Column {
-                Text("Split Pdf", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Primary))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Offline Engine Active • 100% On-device", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary)
-                }
+            ) {
+                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
             }
+            Spacer(modifier = Modifier.width(4.dp))
+            // Removed the Column and subtitle. The title now naturally centers vertically.
+            Text("Split PDF", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = OnSurface)
         }
         Box(
             modifier = Modifier.size(32.dp).clip(CircleShape).background(Primary),
             contentAlignment = Alignment.Center
-        ) { Icon(Icons.Outlined.Person, contentDescription = "User", tint = OnPrimary, modifier = Modifier.size(18.dp)) }
+        ) {
+            Icon(Icons.Outlined.Person, contentDescription = "User", tint = OnPrimary, modifier = Modifier.size(18.dp))
+        }
     }
 }
 
