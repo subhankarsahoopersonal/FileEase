@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -438,7 +439,8 @@ private fun SplitModeTabs(selectedMode: String, onModeSelect: (String) -> Unit) 
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(SurfaceContainerLow).padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            SplitModeButton(modifier = Modifier.weight(1f), title = "Extract Selected", icon = Icons.Outlined.DataArray, isSelected = selectedMode == "range") { onModeSelect("range") }
+            // FIX: Changed "Extract Selected" back to the compact "Page Range"
+            SplitModeButton(modifier = Modifier.weight(1f), title = "Page Range", icon = Icons.Outlined.DataArray, isSelected = selectedMode == "range") { onModeSelect("range") }
             SplitModeButton(modifier = Modifier.weight(1f), title = "Extract All", icon = Icons.Outlined.BurstMode, isSelected = selectedMode == "all") { onModeSelect("all") }
             SplitModeButton(modifier = Modifier.weight(1f), title = "Fixed Sets", icon = Icons.Outlined.AutoStories, isSelected = selectedMode == "fixed") { onModeSelect("fixed") }
         }
@@ -450,13 +452,26 @@ private fun SplitModeButton(modifier: Modifier = Modifier, title: String, icon: 
     val bgColor = if (isSelected) SurfaceContainerLowest else Color.Transparent
     val textColor = if (isSelected) Primary else OnSurfaceVariant
     Column(
-        modifier = modifier.shadow(if (isSelected) 1.dp else 0.dp, RoundedCornerShape(8.dp)).background(bgColor, RoundedCornerShape(8.dp)).clickable { onClick() }.padding(vertical = 10.dp, horizontal = 8.dp),
+        modifier = modifier
+            .shadow(if (isSelected) 1.dp else 0.dp, RoundedCornerShape(8.dp))
+            .background(bgColor, RoundedCornerShape(8.dp))
+            .clickable { onClick() }
+            .padding(vertical = 10.dp, horizontal = 2.dp), // Reduced horizontal padding to allow more text room
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Icon(icon, contentDescription = null, tint = textColor, modifier = Modifier.size(18.dp))
         Spacer(modifier = Modifier.height(4.dp))
-        Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = textColor, maxLines = 1)
+        // FIX: Enabled 2 lines, centering, and slightly reduced font size to prevent clipping
+        Text(
+            text = title,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = textColor,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            lineHeight = 14.sp
+        )
     }
 }
 
