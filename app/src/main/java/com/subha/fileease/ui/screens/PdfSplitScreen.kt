@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -81,7 +82,7 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
     val pages = remember { mutableStateListOf<PageItem>() }
 
     var selectedMode by remember { mutableStateOf("range") }
-    var rangeInput by remember { mutableStateOf("2") } // Used for Fixed Sets chunk size
+    var rangeInput by remember { mutableStateOf("2") }
     var saveAsZip by remember { mutableStateOf(true) }
     var deleteOriginal by remember { mutableStateOf(false) }
 
@@ -161,7 +162,6 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
 
                                     when (selectedMode) {
                                         "range" -> {
-                                            // Extract exactly what is visually selected in the grid
                                             val newDoc = PDDocument()
                                             val selectedPages = pages.filter { it.isSelected }
                                             selectedPages.forEachIndexed { index, pageItem ->
@@ -174,7 +174,6 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
                                             generatedFiles.add(outFile)
                                         }
                                         "all" -> {
-                                            // Burst document into 1-page files
                                             val splitter = Splitter()
                                             splitter.setSplitAtPage(1)
                                             val splitDocs = splitter.split(document)
@@ -187,7 +186,6 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
                                             }
                                         }
                                         "fixed" -> {
-                                            // Split into sets of X
                                             val chunkSize = rangeInput.toIntOrNull() ?: 2
                                             val splitter = Splitter()
                                             splitter.setSplitAtPage(chunkSize)
@@ -219,12 +217,10 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
                                             }
                                         }
                                     }
-                                    // Clean up temporary unzipped files
                                     generatedFiles.forEach { it.delete() }
                                     outputDir.delete()
                                     finalOutputFile = zipFile
                                 } else if (generatedFiles.size == 1) {
-                                    // If it's just one file, move it to Downloads directly and delete temp folder
                                     val singleFile = generatedFiles.first()
                                     val movedFile = File(downloadsDir, singleFile.name)
                                     singleFile.renameTo(movedFile)
@@ -232,12 +228,35 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
                                     finalOutputFile = movedFile
                                 }
 
+                                // DELETION PIPELINE (SAF Secure Delete)
+                                var deletedOriginalStatus = ""
+                                var wasDeleted = false
+                                if (deleteOriginal && selectedFileUri != null) {
+                                    try {
+                                        wasDeleted = DocumentsContract.deleteDocument(context.contentResolver, selectedFileUri!!)
+                                        if (wasDeleted) {
+                                            deletedOriginalStatus = " • Original deleted"
+                                        }
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                    }
+                                }
+
                                 withContext(Dispatchers.Main) {
+                                    // Reset UI immediately if the original file was successfully deleted
+                                    if (wasDeleted) {
+                                        selectedFileUri = null
+                                        fileName = ""
+                                        fileSize = ""
+                                        pages.clear()
+                                        rangeInput = "2"
+                                    }
+
                                     isProcessing = false
                                     processingComplete = true
 
                                     val result = snackbarHostState.showSnackbar(
-                                        message = "Success! Saved to Downloads",
+                                        message = "Success! Saved to Downloads$deletedOriginalStatus",
                                         actionLabel = if (finalOutputFile.isFile) "OPEN" else null,
                                         duration = SnackbarDuration.Long
                                     )
@@ -299,7 +318,6 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
                         onModeSelect = { selectedMode = it }
                     )
 
-                    // Dynamic UI: Changes based on selected mode
                     if (selectedMode == "fixed") {
                         RangeInputSection(
                             title = "Pages per Split",
@@ -319,7 +337,6 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
                             }
                         )
                     } else {
-                        // Visual feedback that Burst mode is active
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -439,7 +456,6 @@ private fun SplitModeTabs(selectedMode: String, onModeSelect: (String) -> Unit) 
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(SurfaceContainerLow).padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            // FIX: Changed "Extract Selected" back to the compact "Page Range"
             SplitModeButton(modifier = Modifier.weight(1f), title = "Page Range", icon = Icons.Outlined.DataArray, isSelected = selectedMode == "range") { onModeSelect("range") }
             SplitModeButton(modifier = Modifier.weight(1f), title = "Extract All", icon = Icons.Outlined.BurstMode, isSelected = selectedMode == "all") { onModeSelect("all") }
             SplitModeButton(modifier = Modifier.weight(1f), title = "Fixed Sets", icon = Icons.Outlined.AutoStories, isSelected = selectedMode == "fixed") { onModeSelect("fixed") }
@@ -452,26 +468,13 @@ private fun SplitModeButton(modifier: Modifier = Modifier, title: String, icon: 
     val bgColor = if (isSelected) SurfaceContainerLowest else Color.Transparent
     val textColor = if (isSelected) Primary else OnSurfaceVariant
     Column(
-        modifier = modifier
-            .shadow(if (isSelected) 1.dp else 0.dp, RoundedCornerShape(8.dp))
-            .background(bgColor, RoundedCornerShape(8.dp))
-            .clickable { onClick() }
-            .padding(vertical = 10.dp, horizontal = 2.dp), // Reduced horizontal padding to allow more text room
+        modifier = modifier.shadow(if (isSelected) 1.dp else 0.dp, RoundedCornerShape(8.dp)).background(bgColor, RoundedCornerShape(8.dp)).clickable { onClick() }.padding(vertical = 10.dp, horizontal = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Icon(icon, contentDescription = null, tint = textColor, modifier = Modifier.size(18.dp))
         Spacer(modifier = Modifier.height(4.dp))
-        // FIX: Enabled 2 lines, centering, and slightly reduced font size to prevent clipping
-        Text(
-            text = title,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = textColor,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            lineHeight = 14.sp
-        )
+        Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = textColor, textAlign = TextAlign.Center, maxLines = 2, lineHeight = 14.sp)
     }
 }
 
