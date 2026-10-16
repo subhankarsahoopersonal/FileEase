@@ -204,7 +204,6 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
 
                                 var finalOutputFile: File = outputDir
 
-                                // Zipping Pipeline
                                 if (saveAsZip && generatedFiles.size > 1) {
                                     val zipFile = File(downloadsDir, "${cleanFileName}_split.zip")
                                     ZipOutputStream(BufferedOutputStream(FileOutputStream(zipFile))).use { zos ->
@@ -228,7 +227,6 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
                                     finalOutputFile = movedFile
                                 }
 
-                                // DELETION PIPELINE (SAF Secure Delete)
                                 var deletedOriginalStatus = ""
                                 var wasDeleted = false
                                 if (deleteOriginal && selectedFileUri != null) {
@@ -243,7 +241,6 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
                                 }
 
                                 withContext(Dispatchers.Main) {
-                                    // Reset UI immediately if the original file was successfully deleted
                                     if (wasDeleted) {
                                         selectedFileUri = null
                                         fileName = ""
@@ -299,13 +296,7 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Icon(Icons.Outlined.CallSplit, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
-                        Text("Split Mode & Page Range", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                    }
-                    Text("Separate multi-page documents locally without quality loss", fontSize = 13.sp, color = OnSurfaceVariant)
-                }
+                // REMOVED: Split Mode & Page Range Header
 
                 ActiveFileCard(
                     hasFile = hasFile, fileName = fileName, fileSize = fileSize,
