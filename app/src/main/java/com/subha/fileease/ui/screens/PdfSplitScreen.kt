@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -296,8 +298,6 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // REMOVED: Split Mode & Page Range Header
-
                 ActiveFileCard(
                     hasFile = hasFile, fileName = fileName, fileSize = fileSize,
                     totalPages = totalPages, onChangeClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) }
@@ -345,7 +345,8 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
                         deleteOriginal = deleteOriginal, onDeleteToggle = { deleteOriginal = !deleteOriginal }
                     )
 
-                    ZeroCloudBanner()
+                    // Unified Minimalist Security Badge
+                    SecurityBadge()
                 }
 
                 Spacer(modifier = Modifier.height(112.dp))
@@ -365,14 +366,9 @@ private fun SplitTopBar(onNavigateBack: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .clickable { onNavigateBack() },
+            modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
             contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
-        }
+        ) { Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface) }
         Spacer(modifier = Modifier.width(4.dp))
         Text("Split PDF", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = OnSurface)
     }
@@ -412,6 +408,8 @@ private fun ActiveFileCard(hasFile: Boolean, fileName: String, fileSize: String,
                         Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(fileSize, fontSize = 12.sp, color = OnSurfaceVariant)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Ready", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
                     }
@@ -583,15 +581,30 @@ private fun CustomToggleRow(icon: androidx.compose.ui.graphics.vector.ImageVecto
     }
 }
 
+// Unified Minimalist Security Badge
 @Composable
-private fun ZeroCloudBanner() {
-    Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Primary.copy(alpha = 0.05f)).padding(12.dp), verticalAlignment = Alignment.Top) {
-        Icon(Icons.Outlined.VerifiedUser, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
-        Spacer(modifier = Modifier.width(8.dp))
-        Column {
-            Text("Zero Cloud Latency", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Primary)
-            Text("Splitting runs completely in WebAssembly on this device.", fontSize = 12.sp, color = OnSurfaceVariant, lineHeight = 16.sp)
-        }
+fun SecurityBadge(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // FIX: Changed from Icons.Filled.Shield to Icons.Filled.Security
+        Icon(
+            imageVector = Icons.Filled.Security,
+            contentDescription = null,
+            tint = Primary,
+            modifier = Modifier.size(15.dp)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = "Zero Server Uploads • Encrypted sandboxed memory",
+            fontSize = 11.sp,
+            color = Tertiary,
+            fontWeight = FontWeight.Normal
+        )
     }
 }
 
