@@ -17,6 +17,7 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -58,6 +59,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 // Exact color tokens
 private val Surface = Color(0xFFFAF8FF)
@@ -78,6 +80,10 @@ private val OutlineVariant = Color(0xFFC2C6D8)
 private val SurfaceVariant = Color(0xFFDAE2FD)
 private val Tertiary = Color(0xFF4E5A69)
 
+// Efficiency Colors
+private val EfficiencyGreenStart = Color(0xFF10B981) // Emerald 500
+private val EfficiencyGreenEnd = Color(0xFF047857)   // Emerald 700
+
 @Composable
 fun PdfCompressScreen(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
@@ -93,7 +99,7 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
     var filePages by remember { mutableIntStateOf(0) }
 
     // Settings State
-    var selectedPreset by remember { mutableStateOf("recommended") }
+    var compressionLevel by remember { mutableFloatStateOf(1f) } // 0f = Low, 1f = Medium, 2f = High
     var stripThumbnails by remember { mutableStateOf(true) }
     var grayscaleToggle by remember { mutableStateOf(false) }
     var isProcessing by remember { mutableStateOf(false) }
@@ -104,7 +110,7 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
     val hasFile = selectedFileUri != null
 
     // Reset actual result back to estimation mode if user tweaks any setting
-    LaunchedEffect(selectedFileUri, selectedPreset, stripThumbnails, grayscaleToggle) {
+    LaunchedEffect(selectedFileUri, compressionLevel, stripThumbnails, grayscaleToggle) {
         actualSavedSizeMb = null
     }
 
@@ -143,10 +149,11 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
     }
 
     val originalSize = if (hasFile) fileSizeMb else 0.0
-    val baseReduction = when (selectedPreset) {
-        "extreme" -> 85
-        "recommended" -> 65
-        else -> 30
+    val levelInt = compressionLevel.roundToInt()
+    val baseReduction = when (levelInt) {
+        2 -> 85 // High
+        1 -> 65 // Medium
+        else -> 30 // Low
     }
 
     val finalReduction = if (grayscaleToggle) min(95, baseReduction + 10) else baseReduction
@@ -160,126 +167,136 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
         topBar = { CompressTopBar(onNavigateBack) },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            CompressBottomBar(hasFile = hasFile, isProcessing = isProcessing) {
-                if (hasFile) {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    coroutineScope.launch(Dispatchers.IO) {
-                        isProcessing = true
-                        try {
-                            val cleanFileName = fileName.removeSuffix(".pdf")
-                            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                            val outputFile = File(downloadsDir, "${cleanFileName}_compressed_${System.currentTimeMillis()}.pdf")
+            CompressBottomBar(
+                hasFile = hasFile,
+                isProcessing = isProcessing,
+                compressionLevel = compressionLevel,
+                onLevelChange = { newLevel ->
+                    if (newLevel != compressionLevel) {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        compressionLevel = newLevel
+                    }
+                },
+                onCompressClick = {
+                    if (hasFile) {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        coroutineScope.launch(Dispatchers.IO) {
+                            isProcessing = true
+                            try {
+                                val cleanFileName = fileName.removeSuffix(".pdf")
+                                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                                val outputFile = File(downloadsDir, "${cleanFileName}_compressed_${System.currentTimeMillis()}.pdf")
 
-                            context.contentResolver.openInputStream(selectedFileUri!!)?.use { inputStream ->
-                                val document = PDDocument.load(inputStream, MemoryUsageSetting.setupMixed(50 * 1024 * 1024))
+                                context.contentResolver.openInputStream(selectedFileUri!!)?.use { inputStream ->
+                                    val document = PDDocument.load(inputStream, MemoryUsageSetting.setupMixed(50 * 1024 * 1024))
 
-                                val imageQuality = when (selectedPreset) {
-                                    "extreme" -> 0.3f
-                                    "recommended" -> 0.6f
-                                    else -> 0.85f
-                                }
-                                val maxImageWidth = when (selectedPreset) {
-                                    "extreme" -> 800
-                                    "recommended" -> 1600
-                                    else -> 2400
-                                }
+                                    val imageQuality = when (levelInt) {
+                                        2 -> 0.3f
+                                        1 -> 0.6f
+                                        else -> 0.85f
+                                    }
+                                    val maxImageWidth = when (levelInt) {
+                                        2 -> 800
+                                        1 -> 1600
+                                        else -> 2400
+                                    }
 
-                                for (page in document.pages) {
-                                    val resources = page.resources ?: continue
-                                    val imageNames = resources.xObjectNames.filter { resources.isImageXObject(it) }.toList()
+                                    for (page in document.pages) {
+                                        val resources = page.resources ?: continue
+                                        val imageNames = resources.xObjectNames.filter { resources.isImageXObject(it) }.toList()
 
-                                    for (name in imageNames) {
-                                        try {
-                                            val xObject = resources.getXObject(name) as? PDImageXObject
-                                            val originalBitmap = xObject?.image ?: continue
+                                        for (name in imageNames) {
+                                            try {
+                                                val xObject = resources.getXObject(name) as? PDImageXObject
+                                                val originalBitmap = xObject?.image ?: continue
 
-                                            // Draw original image onto a solid white canvas to strip transparency
-                                            var processBitmap = Bitmap.createBitmap(originalBitmap.width, originalBitmap.height, Bitmap.Config.ARGB_8888)
-                                            val bgCanvas = Canvas(processBitmap)
-                                            bgCanvas.drawColor(android.graphics.Color.WHITE)
-                                            bgCanvas.drawBitmap(originalBitmap, 0f, 0f, null)
+                                                var processBitmap = Bitmap.createBitmap(originalBitmap.width, originalBitmap.height, Bitmap.Config.ARGB_8888)
+                                                val bgCanvas = Canvas(processBitmap)
+                                                bgCanvas.drawColor(android.graphics.Color.WHITE)
+                                                bgCanvas.drawBitmap(originalBitmap, 0f, 0f, null)
 
-                                            if (grayscaleToggle) {
-                                                val grayBmp = Bitmap.createBitmap(processBitmap.width, processBitmap.height, Bitmap.Config.ARGB_8888)
-                                                val canvas = Canvas(grayBmp)
-                                                val paint = Paint()
-                                                val colorMatrix = ColorMatrix().apply { setSaturation(0f) }
-                                                paint.colorFilter = ColorMatrixColorFilter(colorMatrix)
-                                                canvas.drawBitmap(processBitmap, 0f, 0f, paint)
-                                                processBitmap = grayBmp
+                                                if (grayscaleToggle) {
+                                                    val grayBmp = Bitmap.createBitmap(processBitmap.width, processBitmap.height, Bitmap.Config.ARGB_8888)
+                                                    val canvas = Canvas(grayBmp)
+                                                    val paint = Paint()
+                                                    val colorMatrix = ColorMatrix().apply { setSaturation(0f) }
+                                                    paint.colorFilter = ColorMatrixColorFilter(colorMatrix)
+                                                    canvas.drawBitmap(processBitmap, 0f, 0f, paint)
+                                                    processBitmap = grayBmp
+                                                }
+
+                                                if (processBitmap.width > maxImageWidth) {
+                                                    val scale = maxImageWidth.toFloat() / processBitmap.width
+                                                    val newHeight = (processBitmap.height * scale).toInt()
+                                                    processBitmap = Bitmap.createScaledBitmap(processBitmap, maxImageWidth, newHeight, true)
+                                                }
+
+                                                val compressedImage = JPEGFactory.createFromImage(document, processBitmap, imageQuality)
+                                                resources.put(name, compressedImage)
+                                            } catch (e: Exception) {
+                                                e.printStackTrace()
                                             }
-
-                                            if (processBitmap.width > maxImageWidth) {
-                                                val scale = maxImageWidth.toFloat() / processBitmap.width
-                                                val newHeight = (processBitmap.height * scale).toInt()
-                                                processBitmap = Bitmap.createScaledBitmap(processBitmap, maxImageWidth, newHeight, true)
-                                            }
-
-                                            val compressedImage = JPEGFactory.createFromImage(document, processBitmap, imageQuality)
-                                            resources.put(name, compressedImage)
-                                        } catch (e: Exception) {
-                                            e.printStackTrace()
                                         }
                                     }
+
+                                    if (stripThumbnails) {
+                                        document.documentCatalog.metadata = null
+                                        document.documentInformation?.let { info ->
+                                            info.author = null
+                                            info.creator = null
+                                            info.keywords = null
+                                            info.producer = null
+                                        }
+                                    }
+
+                                    document.save(outputFile)
+                                    document.close()
                                 }
 
-                                if (stripThumbnails) {
-                                    document.documentCatalog.metadata = null
-                                    document.documentInformation?.let { info ->
-                                        info.author = null
-                                        info.creator = null
-                                        info.keywords = null
-                                        info.producer = null
+                                val exactSavedLength = outputFile.length()
+                                val exactSavedMb = exactSavedLength / (1024.0 * 1024.0)
+
+                                withContext(Dispatchers.Main) {
+                                    actualSavedSizeMb = max(0.1, exactSavedMb)
+
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        val timings = longArrayOf(0, 80, 100, 120)
+                                        val amplitudes = intArrayOf(0, 150, 0, 255)
+                                        vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                                    } else {
+                                        @Suppress("DEPRECATION")
+                                        vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                    }
+
+                                    val result = snackbarHostState.showSnackbar(
+                                        message = "Success! Saved to Downloads",
+                                        actionLabel = "OPEN",
+                                        duration = SnackbarDuration.Long
+                                    )
+                                    if (result == SnackbarResult.ActionPerformed) {
+                                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", outputFile)
+                                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                                            setDataAndType(uri, "application/pdf")
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(Intent.createChooser(intent, "Open File"))
                                     }
                                 }
-
-                                document.save(outputFile)
-                                document.close()
-                            }
-
-                            val exactSavedLength = outputFile.length()
-                            val exactSavedMb = exactSavedLength / (1024.0 * 1024.0)
-
-                            withContext(Dispatchers.Main) {
-                                actualSavedSizeMb = max(0.1, exactSavedMb)
-
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    val timings = longArrayOf(0, 80, 100, 120)
-                                    val amplitudes = intArrayOf(0, 150, 0, 255)
-                                    vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
-                                } else {
-                                    @Suppress("DEPRECATION")
-                                    vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    snackbarHostState.showSnackbar("Compression failed: ${e.localizedMessage}")
                                 }
-
-                                val result = snackbarHostState.showSnackbar(
-                                    message = "Success! Saved to Downloads",
-                                    actionLabel = "OPEN",
-                                    duration = SnackbarDuration.Long
-                                )
-                                if (result == SnackbarResult.ActionPerformed) {
-                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", outputFile)
-                                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                                        setDataAndType(uri, "application/pdf")
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    }
-                                    context.startActivity(Intent.createChooser(intent, "Open File"))
+                            } finally {
+                                withContext(Dispatchers.Main) {
+                                    isProcessing = false
                                 }
-                            }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) {
-                                snackbarHostState.showSnackbar("Compression failed: ${e.localizedMessage}")
-                            }
-                        } finally {
-                            withContext(Dispatchers.Main) {
-                                isProcessing = false
                             }
                         }
+                    } else {
+                        pdfPickerLauncher.launch(arrayOf("application/pdf"))
                     }
-                } else {
-                    pdfPickerLauncher.launch(arrayOf("application/pdf"))
                 }
-            }
+            )
         },
         contentWindowInsets = WindowInsets(0.dp)
     ) { innerPadding ->
@@ -293,14 +310,8 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                Column {
-                    Text("Compress PDF", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text("Reduce document weight swiftly while maintaining legibility.", fontSize = 13.sp, color = OnSurfaceVariant)
-                }
-
                 SourceDocumentCard(
                     hasFile = hasFile,
                     fileName = fileName,
@@ -311,15 +322,8 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                 )
 
                 if (hasFile) {
-                    CompressionPresetsSection(
-                        selectedPreset = selectedPreset,
-                        onSelect = {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            selectedPreset = it
-                        }
-                    )
-
                     ProjectionCard(
+                        levelInt = levelInt,
                         originalSize = originalSize,
                         finalSize = finalSize,
                         finalReduction = finalReduction,
@@ -344,7 +348,7 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                     SecurityBadge()
                 }
 
-                Spacer(modifier = Modifier.height(112.dp))
+                Spacer(modifier = Modifier.height(180.dp)) // Extra padding for the bottom anchor
             }
         }
     }
@@ -366,15 +370,8 @@ private fun CompressTopBar(onNavigateBack: () -> Unit) {
                 modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
                 contentAlignment = Alignment.Center
             ) { Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface) }
-            Spacer(modifier = Modifier.width(4.dp))
-            Column {
-                Text("Pdf Compressor", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Primary))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Offline Engine Active • 100% On-device", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary)
-                }
-            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Text("Pdf Compressor", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
         }
         Box(
             modifier = Modifier.size(32.dp).clip(CircleShape).background(Primary),
@@ -394,7 +391,7 @@ private fun SourceDocumentCard(hasFile: Boolean, fileName: String, fileSizeMb: D
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.05f))
+            .shadow(6.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.1f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .clickable(enabled = !hasFile && !isProcessing) { onChangeClick() }
             .padding(16.dp),
@@ -403,108 +400,46 @@ private fun SourceDocumentCard(hasFile: Boolean, fileName: String, fileSizeMb: D
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
             Box(
-                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(if (hasFile) ErrorContainer else SurfaceContainerLow).alpha(alphaPulse),
+                modifier = Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(if (hasFile) ErrorContainer else SurfaceContainerLow).alpha(alphaPulse),
                 contentAlignment = Alignment.Center
             ) {
                 if (hasFile) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(24.dp))
+                        Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(26.dp))
                     }
                 } else {
-                    Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = Primary, modifier = Modifier.size(24.dp))
+                    Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = Primary, modifier = Modifier.size(26.dp))
                 }
             }
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 if (hasFile) {
-                    Text(fileName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(fileName, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(modifier = Modifier.height(2.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("$fileSizeMb MB", fontSize = 11.sp, color = OnSurfaceVariant)
+                        Text("$fileSizeMb MB", fontSize = 12.sp, color = OnSurfaceVariant)
                         Spacer(modifier = Modifier.width(6.dp))
                         Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("$filePages pages", fontSize = 11.sp, color = OnSurfaceVariant)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(if (isProcessing) "Compressing..." else "Ready", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                        Text("$filePages pages", fontSize = 12.sp, color = OnSurfaceVariant)
                     }
                 } else {
-                    Text("No file selected", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                    Text("No file selected", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text("Tap to browse storage", fontSize = 12.sp, color = OnSurfaceVariant)
                 }
             }
         }
         Box(
-            modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLow).clickable(enabled = !isProcessing) { onChangeClick() }.padding(horizontal = 12.dp, vertical = 6.dp)
+            modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLow).clickable(enabled = !isProcessing) { onChangeClick() }.padding(horizontal = 14.dp, vertical = 8.dp)
         ) {
-            Text(if (hasFile) "Change" else "Select", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (isProcessing) OutlineVariant else Primary)
+            Text(if (hasFile) "Change" else "Select", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (isProcessing) OutlineVariant else Primary)
         }
     }
 }
 
 @Composable
-private fun CompressionPresetsSection(selectedPreset: String, onSelect: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("COMPRESSION PRESETS", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = OnSurface, letterSpacing = 0.5.sp)
-        }
-
-        PresetCard(
-            id = "extreme", title = "Extreme Compression", reduction = "~85%",
-            desc = "Low visual weight, 72 DPI. Ideal for email limits and mobile networks.",
-            isSelected = selectedPreset == "extreme", onClick = { onSelect("extreme") }
-        )
-        PresetCard(
-            id = "recommended", title = "Recommended", reduction = "Best Balance", isBold = true,
-            desc = "Balanced density, 150 DPI. Crisp vector outlines and legible text.",
-            isSelected = selectedPreset == "recommended", onClick = { onSelect("recommended") }
-        )
-        PresetCard(
-            id = "light", title = "Light Compression", reduction = "~30%",
-            desc = "Retains high fidelity, 300 DPI. Perfect for commercial prints and portfolios.",
-            isSelected = selectedPreset == "light", onClick = { onSelect("light") }
-        )
-    }
-}
-
-@Composable
-private fun PresetCard(id: String, title: String, reduction: String, desc: String, isBold: Boolean = false, isSelected: Boolean, onClick: () -> Unit) {
-    val shadowColor = if (isSelected) PrimaryContainer.copy(alpha = 0.18f) else Color.Black.copy(alpha = 0.05f)
-    val shadowElevation by animateDpAsState(targetValue = if (isSelected) 8.dp else 1.dp, label = "elevation")
-    val bgColor by animateColorAsState(targetValue = if (isSelected) SurfaceContainerLowest else SurfaceContainerLowest.copy(alpha = 0.7f), label = "bg")
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(shadowElevation, RoundedCornerShape(16.dp), spotColor = shadowColor)
-            .background(bgColor, RoundedCornerShape(16.dp))
-            .clickable { onClick() }
-            .padding(16.dp),
-        verticalAlignment = Alignment.Top
-    ) {
-        Box(
-            modifier = Modifier.padding(top = 2.dp).size(20.dp).clip(CircleShape).border(2.dp, if (isSelected) Primary else OutlineVariant, CircleShape).background(Color.Transparent),
-            contentAlignment = Alignment.Center
-        ) {
-            if (isSelected) Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Primary))
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        Column {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(title, fontSize = 15.sp, fontWeight = if (isBold || isSelected) FontWeight.Bold else FontWeight.SemiBold, color = OnSurface)
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(if (isBold) PrimaryContainer else SurfaceContainerHigh).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                    Text(reduction, fontSize = 10.sp, fontWeight = if (isBold) FontWeight.Bold else FontWeight.SemiBold, color = if (isBold) OnPrimaryContainer else OnSurfaceVariant)
-                }
-            }
-            Text(desc, fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 4.dp), lineHeight = 16.sp)
-        }
-    }
-}
-
-@Composable
-private fun ProjectionCard(originalSize: Double, finalSize: Double, finalReduction: Int, savedMb: Double, remainingPct: Float, actualSavedSizeMb: Double?) {
+private fun ProjectionCard(levelInt: Int, originalSize: Double, finalSize: Double, finalReduction: Int, savedMb: Double, remainingPct: Float, actualSavedSizeMb: Double?) {
     val isActualResult = actualSavedSizeMb != null
 
     val displaySize = actualSavedSizeMb ?: finalSize
@@ -517,6 +452,22 @@ private fun ProjectionCard(originalSize: Double, finalSize: Double, finalReducti
     val displaySaved = max(0.0, originalSize - displaySize)
     val displayRemainingPct = if (originalSize > 0) (displaySize / originalSize).toFloat().coerceIn(0f, 1f) else 1f
 
+    val targetStartColor = when (levelInt) {
+        2 -> EfficiencyGreenStart
+        1 -> PrimaryContainer
+        else -> Tertiary
+    }
+
+    val targetEndColor = when (levelInt) {
+        2 -> EfficiencyGreenEnd
+        1 -> Primary
+        else -> OnSurfaceVariant
+    }
+
+    val animatedStart by animateColorAsState(targetValue = targetStartColor, animationSpec = tween(600), label = "colorStart")
+    val animatedEnd by animateColorAsState(targetValue = targetEndColor, animationSpec = tween(600), label = "colorEnd")
+    val spotShadow by animateColorAsState(targetValue = targetStartColor.copy(alpha = 0.4f), label = "spot")
+
     val animatedProgress by animateFloatAsState(targetValue = displayRemainingPct, animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing), label = "progress")
     val animatedFinalSize by animateFloatAsState(targetValue = displaySize.toFloat(), animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing), label = "size")
     val animatedSaved by animateFloatAsState(targetValue = displaySaved.toFloat(), animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing), label = "saved")
@@ -524,51 +475,51 @@ private fun ProjectionCard(originalSize: Double, finalSize: Double, finalReducti
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(12.dp, RoundedCornerShape(16.dp), spotColor = PrimaryContainer.copy(alpha = 0.3f))
-            .background(Brush.linearGradient(listOf(PrimaryContainer, Secondary, Primary)), RoundedCornerShape(16.dp))
-            .padding(16.dp)
+            .shadow(16.dp, RoundedCornerShape(16.dp), spotColor = spotShadow)
+            .background(Brush.linearGradient(listOf(animatedStart, animatedEnd)), RoundedCornerShape(16.dp))
+            .padding(20.dp)
     ) {
-        Box(modifier = Modifier.align(Alignment.BottomEnd).offset(x = 40.dp, y = 40.dp).size(160.dp).blur(24.dp).background(SurfaceContainerLowest.copy(alpha = 0.1f), CircleShape))
+        Box(modifier = Modifier.align(Alignment.BottomEnd).offset(x = 40.dp, y = 40.dp).size(160.dp).blur(24.dp).background(SurfaceContainerLowest.copy(alpha = 0.15f), CircleShape))
 
         Column {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     AnimatedContent(targetState = isActualResult, label = "icon") { actual ->
                         if (actual) {
-                            Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(20.dp))
                         } else {
-                            Icon(Icons.Outlined.Analytics, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Outlined.Analytics, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(20.dp))
                         }
                     }
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     AnimatedContent(targetState = isActualResult, label = "title") { actual ->
-                        Text(if (actual) "ACTUAL SAVED RESULT" else "PROJECTED ESTIMATE", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = OnPrimary.copy(alpha = 0.9f))
+                        Text(if (actual) "ACTUAL SAVED RESULT" else "PROJECTED ESTIMATE", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = OnPrimary.copy(alpha = 0.9f))
                     }
                 }
-                Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLowest.copy(alpha = 0.2f)).padding(horizontal = 8.dp, vertical = 2.dp)) {
-                    Text("-$displayReduction% Reduction", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
+                Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLowest.copy(alpha = 0.25f)).padding(horizontal = 10.dp, vertical = 4.dp)) {
+                    Text("-$displayReduction% Reduction", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
-                    Text("Original Size", fontSize = 11.sp, color = OnPrimary.copy(alpha = 0.8f))
-                    Text("${"%.1f".format(originalSize)} MB", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
+                    Text("Original Size", fontSize = 12.sp, color = OnPrimary.copy(alpha = 0.8f))
+                    Text("${"%.1f".format(originalSize)} MB", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
                 }
-                Icon(Icons.Outlined.ArrowForward, contentDescription = null, tint = OnPrimary.copy(alpha = 0.6f), modifier = Modifier.size(24.dp))
+                Icon(Icons.Outlined.ArrowForward, contentDescription = null, tint = OnPrimary.copy(alpha = 0.6f), modifier = Modifier.size(28.dp))
                 Column(horizontalAlignment = Alignment.End) {
                     AnimatedContent(targetState = isActualResult, label = "subtitle") { actual ->
-                        Text(if (actual) "Final Saved Size" else "New Estimated Size", fontSize = 11.sp, color = OnPrimary.copy(alpha = 0.8f))
+                        Text(if (actual) "Final Saved Size" else "New Estimated Size", fontSize = 12.sp, color = OnPrimary.copy(alpha = 0.8f))
                     }
                     Row {
-                        if (!isActualResult) Text("~", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = OnPrimary.copy(alpha = 0.7f))
-                        Text("${"%.1f".format(animatedFinalSize)} MB", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
+                        if (!isActualResult) Text("~", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = OnPrimary.copy(alpha = 0.7f))
+                        Text("${"%.1f".format(animatedFinalSize)} MB", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = OnPrimary)
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
             Column {
-                Box(modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)).background(SurfaceContainerLowest.copy(alpha = 0.2f)).padding(2.dp)) {
+                Box(modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(50)).background(SurfaceContainerLowest.copy(alpha = 0.2f)).padding(2.dp)) {
                     Box(modifier = Modifier.fillMaxWidth(animatedProgress).fillMaxHeight().clip(RoundedCornerShape(50)).background(SurfaceContainerLowest))
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -586,7 +537,7 @@ private fun RefinementOptions(stripThumbnails: Boolean, onStripToggle: () -> Uni
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(16.dp))
+            .shadow(2.dp, RoundedCornerShape(16.dp))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -610,17 +561,18 @@ private fun RefinementOptions(stripThumbnails: Boolean, onStripToggle: () -> Uni
 @Composable
 private fun CustomToggleRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, subtitle: String, isChecked: Boolean, onToggle: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable { onToggle() },
+        modifier = Modifier.fillMaxWidth().clickable { onToggle() }.padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(modifier = Modifier.weight(1f)) {
-            Box(modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainer), contentAlignment = Alignment.Center) {
-                Icon(icon, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
+            Box(modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(SurfaceContainer), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = Primary, modifier = Modifier.size(22.dp))
             }
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(14.dp))
             Column {
-                Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(subtitle, fontSize = 12.sp, color = OnSurfaceVariant)
             }
         }
@@ -628,8 +580,8 @@ private fun CustomToggleRow(icon: androidx.compose.ui.graphics.vector.ImageVecto
         val offset by animateFloatAsState(targetValue = if (isChecked) 20f else 0f, label = "toggle")
         val bgColor = if (isChecked) Primary else SurfaceVariant
 
-        Box(modifier = Modifier.width(44.dp).height(24.dp).clip(RoundedCornerShape(50)).background(bgColor).padding(2.dp)) {
-            Box(modifier = Modifier.size(20.dp).offset(x = offset.dp).clip(CircleShape).background(SurfaceContainerLowest).shadow(1.dp, CircleShape))
+        Box(modifier = Modifier.width(48.dp).height(26.dp).clip(RoundedCornerShape(50)).background(bgColor).padding(2.dp)) {
+            Box(modifier = Modifier.size(22.dp).offset(x = offset.dp).clip(CircleShape).background(SurfaceContainerLowest).shadow(2.dp, CircleShape))
         }
     }
 }
@@ -637,35 +589,70 @@ private fun CustomToggleRow(icon: androidx.compose.ui.graphics.vector.ImageVecto
 @Composable
 private fun SecurityBadge() {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(imageVector = Icons.Filled.Security, contentDescription = null, tint = Primary, modifier = Modifier.size(15.dp))
+        Icon(imageVector = Icons.Filled.Security, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
         Spacer(modifier = Modifier.width(6.dp))
-        Text(text = "Zero Server Uploads • Encrypted sandboxed memory", fontSize = 11.sp, color = Tertiary, fontWeight = FontWeight.Normal)
+        Text(text = "Zero Server Uploads • Encrypted sandboxed memory", fontSize = 12.sp, color = Tertiary, fontWeight = FontWeight.Medium)
     }
 }
 
 @Composable
-private fun CompressBottomBar(hasFile: Boolean, isProcessing: Boolean, onCompressClick: () -> Unit) {
-    val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 12.dp, label = "buttonShape")
+private fun CompressBottomBar(
+    hasFile: Boolean,
+    isProcessing: Boolean,
+    compressionLevel: Float,
+    onLevelChange: (Float) -> Unit,
+    onCompressClick: () -> Unit
+) {
+    val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 16.dp, label = "buttonShape")
     val buttonColor = if (hasFile) PrimaryContainer else SurfaceContainerHigh
     val contentColor = if (hasFile) OnPrimaryContainer else OutlineVariant
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Surface.copy(alpha = 0.95f))
-            .shadow(elevation = 16.dp, spotColor = Color.Black.copy(alpha = 0.06f))
+            .shadow(elevation = 24.dp, spotColor = Color.Black.copy(alpha = 0.15f))
+            .background(Surface.copy(alpha = 0.98f))
             .navigationBarsPadding()
     ) {
+        // Discrete Slider anchored above the button
+        AnimatedVisibility(visible = hasFile && !isProcessing) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 20.dp, bottom = 4.dp)
+            ) {
+                val levelInt = compressionLevel.roundToInt()
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Light", fontSize = 13.sp, fontWeight = if(levelInt == 0) FontWeight.Bold else FontWeight.Medium, color = if(levelInt == 0) Primary else OnSurfaceVariant)
+                    Text("Recommended", fontSize = 13.sp, fontWeight = if(levelInt == 1) FontWeight.Bold else FontWeight.Medium, color = if(levelInt == 1) Primary else OnSurfaceVariant)
+                    Text("Extreme", fontSize = 13.sp, fontWeight = if(levelInt == 2) FontWeight.Bold else FontWeight.Medium, color = if(levelInt == 2) EfficiencyGreenStart else OnSurfaceVariant)
+                }
+                Slider(
+                    value = compressionLevel,
+                    onValueChange = onLevelChange,
+                    valueRange = 0f..2f,
+                    steps = 1,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Primary,
+                        activeTrackColor = Primary,
+                        activeTickColor = Color.Transparent,
+                        inactiveTickColor = Color.Transparent,
+                        inactiveTrackColor = SurfaceContainerHigh
+                    ),
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+
         Box(
             modifier = Modifier
-                .padding(16.dp)
+                .padding(horizontal = 20.dp)
+                .padding(top = if (hasFile && !isProcessing) 4.dp else 20.dp, bottom = 20.dp)
                 .fillMaxWidth()
-                .height(48.dp)
-                .shadow(if (hasFile && !isProcessing) 8.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.35f))
+                .height(56.dp)
+                .shadow(if (hasFile && !isProcessing) 12.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.4f))
                 .clip(RoundedCornerShape(cornerRadius))
                 .background(buttonColor)
                 .clickable(enabled = !isProcessing) { onCompressClick() },
@@ -676,12 +663,12 @@ private fun CompressBottomBar(hasFile: Boolean, isProcessing: Boolean, onCompres
                 label = "buttonContent"
             ) { processing ->
                 if (processing) {
-                    CircularProgressIndicator(color = contentColor, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                    CircularProgressIndicator(color = contentColor, modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(if (hasFile) Icons.Outlined.Compress else Icons.Outlined.Folder, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(if (hasFile) "Compress Document" else "Select a PDF to Compress", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = contentColor)
+                        Icon(if (hasFile) Icons.Outlined.Compress else Icons.Outlined.Folder, contentDescription = null, tint = contentColor, modifier = Modifier.size(22.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(if (hasFile) "Compress Document" else "Select a PDF to Compress", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                     }
                 }
             }
