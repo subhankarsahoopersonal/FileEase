@@ -98,7 +98,7 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
     var grayscaleToggle by remember { mutableStateOf(false) }
     var isProcessing by remember { mutableStateOf(false) }
 
-    // NEW: Store the actual final size after processing
+    // Store the actual final size after processing
     var actualSavedSizeMb by remember { mutableStateOf<Double?>(null) }
 
     val hasFile = selectedFileUri != null
@@ -193,7 +193,11 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                                             val xObject = resources.getXObject(name) as? PDImageXObject
                                             val originalBitmap = xObject?.image ?: continue
 
-                                            var processBitmap = originalBitmap
+                                            // FIX: Strip transparency by drawing the image onto a solid white canvas first
+                                            var processBitmap = Bitmap.createBitmap(originalBitmap.width, originalBitmap.height, Bitmap.Config.ARGB_8888)
+                                            val bgCanvas = Canvas(processBitmap)
+                                            bgCanvas.drawColor(android.graphics.Color.WHITE)
+                                            bgCanvas.drawBitmap(originalBitmap, 0f, 0f, null)
 
                                             if (grayscaleToggle) {
                                                 val grayBmp = Bitmap.createBitmap(processBitmap.width, processBitmap.height, Bitmap.Config.ARGB_8888)
@@ -233,12 +237,10 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                                 document.close()
                             }
 
-                            // Capture exact size of new file
                             val exactSavedLength = outputFile.length()
                             val exactSavedMb = exactSavedLength / (1024.0 * 1024.0)
 
                             withContext(Dispatchers.Main) {
-                                // Update UI with actual result
                                 actualSavedSizeMb = max(0.1, exactSavedMb)
 
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -323,7 +325,7 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                         finalReduction = finalReduction,
                         savedMb = savedMb,
                         remainingPct = remainingPct,
-                        actualSavedSizeMb = actualSavedSizeMb // Pass actual size to card
+                        actualSavedSizeMb = actualSavedSizeMb
                     )
 
                     RefinementOptions(
@@ -503,7 +505,6 @@ private fun PresetCard(id: String, title: String, reduction: String, desc: Strin
 
 @Composable
 private fun ProjectionCard(originalSize: Double, finalSize: Double, finalReduction: Int, savedMb: Double, remainingPct: Float, actualSavedSizeMb: Double?) {
-    // Check if we are showing estimation or actual post-compression result
     val isActualResult = actualSavedSizeMb != null
 
     val displaySize = actualSavedSizeMb ?: finalSize
