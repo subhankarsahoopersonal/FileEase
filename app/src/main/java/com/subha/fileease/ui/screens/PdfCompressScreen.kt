@@ -98,7 +98,15 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
     var grayscaleToggle by remember { mutableStateOf(false) }
     var isProcessing by remember { mutableStateOf(false) }
 
+    // NEW: Store the actual final size after processing
+    var actualSavedSizeMb by remember { mutableStateOf<Double?>(null) }
+
     val hasFile = selectedFileUri != null
+
+    // Reset actual result back to estimation mode if user tweaks any setting
+    LaunchedEffect(selectedFileUri, selectedPreset, stripThumbnails, grayscaleToggle) {
+        actualSavedSizeMb = null
+    }
 
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -154,9 +162,7 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
         bottomBar = {
             CompressBottomBar(hasFile = hasFile, isProcessing = isProcessing) {
                 if (hasFile) {
-                    // Tactile Feedback: Action Confirmation
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-
                     coroutineScope.launch(Dispatchers.IO) {
                         isProcessing = true
                         try {
@@ -167,7 +173,6 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                             context.contentResolver.openInputStream(selectedFileUri!!)?.use { inputStream ->
                                 val document = PDDocument.load(inputStream, MemoryUsageSetting.setupMixed(50 * 1024 * 1024))
 
-                                // Determine processing thresholds based on UI preset
                                 val imageQuality = when (selectedPreset) {
                                     "extreme" -> 0.3f
                                     "recommended" -> 0.6f
@@ -179,7 +184,6 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                                     else -> 2400
                                 }
 
-                                // Iterate and replace images to achieve compression
                                 for (page in document.pages) {
                                     val resources = page.resources ?: continue
                                     val imageNames = resources.xObjectNames.filter { resources.isImageXObject(it) }.toList()
@@ -191,7 +195,6 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
 
                                             var processBitmap = originalBitmap
 
-                                            // Apply Grayscale Filter
                                             if (grayscaleToggle) {
                                                 val grayBmp = Bitmap.createBitmap(processBitmap.width, processBitmap.height, Bitmap.Config.ARGB_8888)
                                                 val canvas = Canvas(grayBmp)
@@ -202,25 +205,20 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                                                 processBitmap = grayBmp
                                             }
 
-                                            // Downscale resolution
                                             if (processBitmap.width > maxImageWidth) {
                                                 val scale = maxImageWidth.toFloat() / processBitmap.width
                                                 val newHeight = (processBitmap.height * scale).toInt()
-
                                                 processBitmap = Bitmap.createScaledBitmap(processBitmap, maxImageWidth, newHeight, true)
                                             }
 
-                                            // Repackage heavily compressed JPEG back into the PDF
                                             val compressedImage = JPEGFactory.createFromImage(document, processBitmap, imageQuality)
                                             resources.put(name, compressedImage)
-
                                         } catch (e: Exception) {
-                                            e.printStackTrace() // Skip corrupted or unsupported sub-images
+                                            e.printStackTrace()
                                         }
                                     }
                                 }
 
-                                // Apply Refinements
                                 if (stripThumbnails) {
                                     document.documentCatalog.metadata = null
                                     document.documentInformation?.let { info ->
@@ -235,11 +233,17 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                                 document.close()
                             }
 
+                            // Capture exact size of new file
+                            val exactSavedLength = outputFile.length()
+                            val exactSavedMb = exactSavedLength / (1024.0 * 1024.0)
+
                             withContext(Dispatchers.Main) {
-                                // Tactile Feedback: Process Completion (Custom two-beat success pulse)
+                                // Update UI with actual result
+                                actualSavedSizeMb = max(0.1, exactSavedMb)
+
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    val timings = longArrayOf(0, 80, 100, 120) // Delay, Vibrate, Pause, Vibrate
-                                    val amplitudes = intArrayOf(0, 150, 0, 255) // 0, Medium, 0, Strong
+                                    val timings = longArrayOf(0, 80, 100, 120)
+                                    val amplitudes = intArrayOf(0, 150, 0, 255)
                                     vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
                                 } else {
                                     @Suppress("DEPRECATION")
@@ -308,24 +312,28 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                     CompressionPresetsSection(
                         selectedPreset = selectedPreset,
                         onSelect = {
-                            // Tactile Feedback: Mechanical Granularity
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             selectedPreset = it
                         }
                     )
 
-                    ProjectionCard(originalSize, finalSize, finalReduction, savedMb, remainingPct)
+                    ProjectionCard(
+                        originalSize = originalSize,
+                        finalSize = finalSize,
+                        finalReduction = finalReduction,
+                        savedMb = savedMb,
+                        remainingPct = remainingPct,
+                        actualSavedSizeMb = actualSavedSizeMb // Pass actual size to card
+                    )
 
                     RefinementOptions(
                         stripThumbnails = stripThumbnails,
                         onStripToggle = {
-                            // Tactile Feedback: Mechanical Granularity
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             stripThumbnails = !stripThumbnails
                         },
                         grayscale = grayscaleToggle,
                         onGrayscaleToggle = {
-                            // Tactile Feedback: Mechanical Granularity
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             grayscaleToggle = !grayscaleToggle
                         }
@@ -494,10 +502,23 @@ private fun PresetCard(id: String, title: String, reduction: String, desc: Strin
 }
 
 @Composable
-private fun ProjectionCard(originalSize: Double, finalSize: Double, finalReduction: Int, savedMb: Double, remainingPct: Float) {
-    val animatedProgress by animateFloatAsState(targetValue = remainingPct, animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing), label = "progress")
-    val animatedFinalSize by animateFloatAsState(targetValue = finalSize.toFloat(), animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing), label = "size")
-    val animatedSaved by animateFloatAsState(targetValue = savedMb.toFloat(), animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing), label = "saved")
+private fun ProjectionCard(originalSize: Double, finalSize: Double, finalReduction: Int, savedMb: Double, remainingPct: Float, actualSavedSizeMb: Double?) {
+    // Check if we are showing estimation or actual post-compression result
+    val isActualResult = actualSavedSizeMb != null
+
+    val displaySize = actualSavedSizeMb ?: finalSize
+    val displayReduction = if (isActualResult && originalSize > 0) {
+        max(0, ((originalSize - displaySize) / originalSize * 100).toInt())
+    } else {
+        finalReduction
+    }
+
+    val displaySaved = max(0.0, originalSize - displaySize)
+    val displayRemainingPct = if (originalSize > 0) (displaySize / originalSize).toFloat().coerceIn(0f, 1f) else 1f
+
+    val animatedProgress by animateFloatAsState(targetValue = displayRemainingPct, animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing), label = "progress")
+    val animatedFinalSize by animateFloatAsState(targetValue = displaySize.toFloat(), animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing), label = "size")
+    val animatedSaved by animateFloatAsState(targetValue = displaySaved.toFloat(), animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing), label = "saved")
 
     Box(
         modifier = Modifier
@@ -511,12 +532,20 @@ private fun ProjectionCard(originalSize: Double, finalSize: Double, finalReducti
         Column {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Analytics, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(18.dp))
+                    AnimatedContent(targetState = isActualResult, label = "icon") { actual ->
+                        if (actual) {
+                            Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(18.dp))
+                        } else {
+                            Icon(Icons.Outlined.Analytics, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(18.dp))
+                        }
+                    }
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("PROJECTED ESTIMATE", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = OnPrimary.copy(alpha = 0.9f))
+                    AnimatedContent(targetState = isActualResult, label = "title") { actual ->
+                        Text(if (actual) "ACTUAL SAVED RESULT" else "PROJECTED ESTIMATE", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = OnPrimary.copy(alpha = 0.9f))
+                    }
                 }
                 Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLowest.copy(alpha = 0.2f)).padding(horizontal = 8.dp, vertical = 2.dp)) {
-                    Text("-$finalReduction% Reduction", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
+                    Text("-$displayReduction% Reduction", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -527,8 +556,13 @@ private fun ProjectionCard(originalSize: Double, finalSize: Double, finalReducti
                 }
                 Icon(Icons.Outlined.ArrowForward, contentDescription = null, tint = OnPrimary.copy(alpha = 0.6f), modifier = Modifier.size(24.dp))
                 Column(horizontalAlignment = Alignment.End) {
-                    Text("New Estimated Size", fontSize = 11.sp, color = OnPrimary.copy(alpha = 0.8f))
-                    Text("~${"%.1f".format(animatedFinalSize)} MB", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
+                    AnimatedContent(targetState = isActualResult, label = "subtitle") { actual ->
+                        Text(if (actual) "Final Saved Size" else "New Estimated Size", fontSize = 11.sp, color = OnPrimary.copy(alpha = 0.8f))
+                    }
+                    Row {
+                        if (!isActualResult) Text("~", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = OnPrimary.copy(alpha = 0.7f))
+                        Text("${"%.1f".format(animatedFinalSize)} MB", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
