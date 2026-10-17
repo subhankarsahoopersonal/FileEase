@@ -239,13 +239,22 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                                         }
                                     }
 
+                                    // Apply Refinements: Phase 2 Deep Structural Stripping
                                     if (stripThumbnails) {
+                                        // 1. Strip top-level metadata (XML bloat)
                                         document.documentCatalog.metadata = null
-                                        document.documentInformation?.let { info ->
-                                            info.author = null
-                                            info.creator = null
-                                            info.keywords = null
-                                            info.producer = null
+                                        document.documentInformation = null
+
+                                        // 2. Strip document-level outlines/bookmarks (Navigation bloat)
+                                        document.documentCatalog.documentOutline = null
+
+                                        // 3. Deep Page-Level Thumbnail Stripping (The heavy lifter)
+                                        for (page in document.pages) {
+                                            // Access the low-level PDF dictionary and physically delete the embedded raster thumbnail
+                                            page.cosObject.removeItem(com.tom_roush.pdfbox.cos.COSName.THUMB)
+
+                                            // Strip page-level metadata if attached
+                                            page.cosObject.removeItem(com.tom_roush.pdfbox.cos.COSName.METADATA)
                                         }
                                     }
 
