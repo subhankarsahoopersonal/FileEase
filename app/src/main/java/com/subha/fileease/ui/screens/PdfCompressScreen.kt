@@ -348,7 +348,7 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                     SecurityBadge()
                 }
 
-                Spacer(modifier = Modifier.height(180.dp)) // Extra padding for the bottom anchor
+                Spacer(modifier = Modifier.height(180.dp))
             }
         }
     }
@@ -362,21 +362,14 @@ private fun CompressTopBar(onNavigateBack: () -> Unit) {
             .background(Surface.copy(alpha = 0.95f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(
-                modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
-                contentAlignment = Alignment.Center
-            ) { Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface) }
-            Spacer(modifier = Modifier.width(12.dp))
-            Text("Pdf Compressor", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-        }
         Box(
-            modifier = Modifier.size(32.dp).clip(CircleShape).background(Primary),
+            modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
             contentAlignment = Alignment.Center
-        ) { Icon(Icons.Outlined.Person, contentDescription = "User", tint = OnPrimary, modifier = Modifier.size(18.dp)) }
+        ) { Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface) }
+        Spacer(modifier = Modifier.width(12.dp))
+        Text("Pdf Compressor", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
     }
 }
 
@@ -618,7 +611,6 @@ private fun CompressBottomBar(
             .background(Surface.copy(alpha = 0.98f))
             .navigationBarsPadding()
     ) {
-        // Discrete Slider anchored above the button
         AnimatedVisibility(visible = hasFile && !isProcessing) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 20.dp, bottom = 4.dp)
