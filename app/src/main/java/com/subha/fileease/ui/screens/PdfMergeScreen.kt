@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -780,16 +781,29 @@ private fun CustomToggleRow(
     }
 }
 
+// Unified Minimalist Security Badge
 @Composable
-private fun SecurityBadge() {
+private fun SecurityBadge(modifier: Modifier = Modifier) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Outlined.Security, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
-        Spacer(modifier = Modifier.width(8.dp))
-        Text("Zero Server Uploads • Encrypted sandboxed memory", fontSize = 10.sp, color = OnSurfaceVariant.copy(alpha = 0.7f))
+        Icon(
+            imageVector = Icons.Filled.Security,
+            contentDescription = null,
+            tint = Primary,
+            modifier = Modifier.size(15.dp)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = "Zero Server Uploads • Encrypted sandboxed memory",
+            fontSize = 11.sp,
+            color = Color(0xFF4E5A69), // FIX: Hardcoded to bypass the private Tertiary token
+            fontWeight = FontWeight.Normal
+        )
     }
 }
 

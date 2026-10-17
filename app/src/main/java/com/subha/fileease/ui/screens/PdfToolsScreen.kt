@@ -26,8 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
-// Note: We removed the color variables here because they are automatically
-// inherited from HomeDashboardScreen.kt!
+// Note: Color variables automatically inherited from HomeDashboardScreen.kt
 
 data class PdfTool(
     val title: String,
@@ -61,6 +60,8 @@ fun PdfToolsScreen(
     Scaffold(
         containerColor = BgColor,
         topBar = { PdfToolsTopBar() },
+        // FIX 1: Prevents nested Scaffolds from double-applying system window insets
+        contentWindowInsets = WindowInsets(0.dp),
         snackbarHost = {
             SnackbarHost(hostState = snackbarHostState) { data ->
                 Box(
@@ -93,8 +94,8 @@ fun PdfToolsScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
                 .background(BgColor)
+                .padding(innerPadding)
         ) {
             // Header Section
             Column(
@@ -121,11 +122,13 @@ fun PdfToolsScreen(
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 modifier = Modifier
-                    .fillMaxSize()
+                    // FIX 2: weight(1f) anchors the grid correctly without constraint stretching
+                    .weight(1f)
                     .padding(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
-                contentPadding = PaddingValues(top = 12.dp, bottom = 112.dp)
+                // FIX 3: Reduced bottom padding from 112.dp to 24.dp since MainScreen handles nav bar
+                contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
             ) {
                 items(tools, key = { it.title }) { tool ->
                     PdfToolCard(
@@ -158,7 +161,6 @@ private fun PdfToolsTopBar() {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Logo & App Name
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
@@ -195,11 +197,11 @@ fun PdfToolCard(tool: PdfTool, onClick: () -> Unit) {
                 elevation = 2.dp,
                 shape = RoundedCornerShape(16.dp),
                 ambientColor = Color.Black.copy(alpha = 0.04f),
-                spotColor = Color.Black.copy(alpha = 0.04f)
+                spotColor = Color.Black.copy(alpha = 0.08f)
             )
+            .background(SurfaceColor, RoundedCornerShape(16.dp))
             .border(1.dp, Slate100, RoundedCornerShape(16.dp))
             .clip(RoundedCornerShape(16.dp))
-            .background(SurfaceColor)
             .clickable { onClick() }
             .padding(16.dp),
         horizontalAlignment = Alignment.Start,

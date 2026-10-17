@@ -23,7 +23,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -345,7 +344,6 @@ fun PdfSplitScreen(onNavigateBack: () -> Unit) {
                         deleteOriginal = deleteOriginal, onDeleteToggle = { deleteOriginal = !deleteOriginal }
                     )
 
-                    // Unified Minimalist Security Badge
                     SecurityBadge()
                 }
 
@@ -369,8 +367,8 @@ private fun SplitTopBar(onNavigateBack: () -> Unit) {
             modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
             contentAlignment = Alignment.Center
         ) { Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface) }
-        Spacer(modifier = Modifier.width(4.dp))
-        Text("Split PDF", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+        Spacer(modifier = Modifier.width(12.dp))
+        Text("Split PDF", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
     }
 }
 
@@ -379,8 +377,8 @@ private fun ActiveFileCard(hasFile: Boolean, fileName: String, fileSize: String,
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(elevation = 1.dp, shape = RoundedCornerShape(12.dp), spotColor = Color.Black.copy(alpha = 0.05f))
-            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+            .shadow(elevation = 1.dp, shape = RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.05f))
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .clickable(enabled = !hasFile) { onChangeClick() }
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -553,25 +551,39 @@ private fun PageThumbnail(page: PageItem, modifier: Modifier = Modifier, onClick
 @Composable
 private fun DestinationSettings(saveAsZip: Boolean, onZipToggle: () -> Unit, deleteOriginal: Boolean, onDeleteToggle: () -> Unit) {
     Column(
-        modifier = Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(12.dp)).background(SurfaceContainerLowest, RoundedCornerShape(12.dp)).padding(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(1.dp, RoundedCornerShape(16.dp))
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Destination Settings", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-        CustomToggleRow(icon = Icons.Outlined.FolderZip, iconBg = SurfaceContainerHigh, iconTint = Primary, title = "Save as single ZIP archive", subtitle = "Keeps files neatly grouped together", isChecked = saveAsZip, onToggle = onZipToggle)
+        Text("Destination Settings", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+        Spacer(modifier = Modifier.height(4.dp))
+        CustomToggleRow(icon = Icons.Outlined.FolderZip, iconBg = SurfaceContainerHigh, iconTint = Primary, title = "Save as single ZIP archive", subtitle = "Keeps files neatly grouped together", isChecked = saveAsZip, enabled = true, onToggle = onZipToggle)
         HorizontalDivider(color = SurfaceContainerLow)
-        CustomToggleRow(icon = Icons.Outlined.DeleteSweep, iconBg = SurfaceContainerLow, iconTint = Tertiary, title = "Delete original file after split", subtitle = "Free up internal storage space", isChecked = deleteOriginal, onToggle = onDeleteToggle)
+        CustomToggleRow(icon = Icons.Outlined.DeleteSweep, iconBg = SurfaceContainerLow, iconTint = Tertiary, title = "Delete original file after split", subtitle = "Free up internal storage space", isChecked = deleteOriginal, enabled = true, onToggle = onDeleteToggle)
     }
 }
 
 @Composable
-private fun CustomToggleRow(icon: androidx.compose.ui.graphics.vector.ImageVector, iconBg: Color, iconTint: Color, title: String, subtitle: String, isChecked: Boolean, onToggle: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().clickable { onToggle() }, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+private fun CustomToggleRow(icon: androidx.compose.ui.graphics.vector.ImageVector, iconBg: Color, iconTint: Color, title: String, subtitle: String, isChecked: Boolean, enabled: Boolean, onToggle: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled) { onToggle() }
+            .alpha(if (enabled) 1f else 0.5f),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Row(modifier = Modifier.weight(1f)) {
-            Box(modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(iconBg), contentAlignment = Alignment.Center) { Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp)) }
+            Box(modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(iconBg), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(18.dp))
+            }
             Spacer(modifier = Modifier.width(12.dp))
             Column {
-                Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                Text(subtitle, fontSize = 12.sp, color = OnSurfaceVariant)
+                Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                Text(subtitle, fontSize = 12.sp, color = OnSurfaceVariant, lineHeight = 16.sp)
             }
         }
         val offset by animateFloatAsState(targetValue = if (isChecked) 20f else 0f, label = "")
@@ -581,9 +593,8 @@ private fun CustomToggleRow(icon: androidx.compose.ui.graphics.vector.ImageVecto
     }
 }
 
-// Unified Minimalist Security Badge
 @Composable
-fun SecurityBadge(modifier: Modifier = Modifier) {
+private fun SecurityBadge(modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -591,7 +602,6 @@ fun SecurityBadge(modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // FIX: Changed from Icons.Filled.Shield to Icons.Filled.Security
         Icon(
             imageVector = Icons.Filled.Security,
             contentDescription = null,
