@@ -193,7 +193,7 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                                             val xObject = resources.getXObject(name) as? PDImageXObject
                                             val originalBitmap = xObject?.image ?: continue
 
-                                            // FIX: Strip transparency by drawing the image onto a solid white canvas first
+                                            // Draw original image onto a solid white canvas to strip transparency
                                             var processBitmap = Bitmap.createBitmap(originalBitmap.width, originalBitmap.height, Bitmap.Config.ARGB_8888)
                                             val bgCanvas = Canvas(processBitmap)
                                             bgCanvas.drawColor(android.graphics.Color.WHITE)
