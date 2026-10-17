@@ -1,5 +1,6 @@
 package com.subha.fileease.ui.screens
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -8,7 +9,10 @@ import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -78,6 +82,7 @@ private val Tertiary = Color(0xFF4E5A69)
 fun PdfCompressScreen(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
+    val vibrator = remember { context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator }
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -149,7 +154,9 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
         bottomBar = {
             CompressBottomBar(hasFile = hasFile, isProcessing = isProcessing) {
                 if (hasFile) {
+                    // Tactile Feedback: Action Confirmation
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+
                     coroutineScope.launch(Dispatchers.IO) {
                         isProcessing = true
                         try {
@@ -199,6 +206,7 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                                             if (processBitmap.width > maxImageWidth) {
                                                 val scale = maxImageWidth.toFloat() / processBitmap.width
                                                 val newHeight = (processBitmap.height * scale).toInt()
+
                                                 processBitmap = Bitmap.createScaledBitmap(processBitmap, maxImageWidth, newHeight, true)
                                             }
 
@@ -228,6 +236,16 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                             }
 
                             withContext(Dispatchers.Main) {
+                                // Tactile Feedback: Process Completion (Custom two-beat success pulse)
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    val timings = longArrayOf(0, 80, 100, 120) // Delay, Vibrate, Pause, Vibrate
+                                    val amplitudes = intArrayOf(0, 150, 0, 255) // 0, Medium, 0, Strong
+                                    vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                }
+
                                 val result = snackbarHostState.showSnackbar(
                                     message = "Success! Saved to Downloads",
                                     actionLabel = "OPEN",
@@ -290,6 +308,7 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                     CompressionPresetsSection(
                         selectedPreset = selectedPreset,
                         onSelect = {
+                            // Tactile Feedback: Mechanical Granularity
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             selectedPreset = it
                         }
@@ -300,11 +319,13 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                     RefinementOptions(
                         stripThumbnails = stripThumbnails,
                         onStripToggle = {
+                            // Tactile Feedback: Mechanical Granularity
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             stripThumbnails = !stripThumbnails
                         },
                         grayscale = grayscaleToggle,
                         onGrayscaleToggle = {
+                            // Tactile Feedback: Mechanical Granularity
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             grayscaleToggle = !grayscaleToggle
                         }
