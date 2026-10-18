@@ -1,9 +1,18 @@
 package com.subha.fileease.ui.screens
 
 import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.pdf.PdfRenderer
+import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.*
@@ -12,6 +21,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,7 +43,9 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -41,8 +53,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 // Exact color tokens
 private val Surface = Color(0xFFFAF8FF)
@@ -63,15 +81,12 @@ private val OutlineVariant = Color(0xFFC2C6D8)
 private val SurfaceVariant = Color(0xFFDAE2FD)
 private val OnTertiaryFixedVariant = Color(0xFF3B4856)
 
-// Data class for Page State
+// Data class updated for actual PDF Thumbnails
 data class RotatePage(
     val id: Int,
     var isSelected: Boolean,
     var rotation: Int,
-    val label: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
-    val desc1: String,
-    val desc2: String
+    val thumbnail: Bitmap? = null
 )
 
 @Composable
@@ -79,28 +94,81 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val vibrator = remember { context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator }
+    val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
+    // File State
+    var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
+    var fileName by remember { mutableStateOf("") }
+    var fileSizeMb by remember { mutableDoubleStateOf(0.0) }
+    var filePages by remember { mutableIntStateOf(0) }
+    val pages = remember { mutableStateListOf<RotatePage>() }
+
+    // UI State
     var activeScope by remember { mutableStateOf("selected") }
     var isProcessing by remember { mutableStateOf(false) }
+    var isParsing by remember { mutableStateOf(false) }
     var processingComplete by remember { mutableStateOf(false) }
-    val coroutineScope = rememberCoroutineScope()
 
-    // Mock Data mirroring the design
-    val pages = remember {
-        mutableStateListOf(
-            RotatePage(1, false, 0, "CAD", Icons.Outlined.Architecture, "Rev 3.2", "ISO 9001"),
-            RotatePage(2, true, 90, "SCH", Icons.Outlined.AltRoute, "Section B", "Scale 1:50"),
-            RotatePage(3, true, 0, "SPEC", Icons.Outlined.Schema, "Specs V2", "Part #99"),
-            RotatePage(4, true, 90, "DWG", Icons.Outlined.ViewQuilt, "Foundation", "Grid A-4"),
-            RotatePage(5, false, 0, "ELEC", Icons.Outlined.ElectricBolt, "Wiring #1", "240V Line"),
-            RotatePage(6, true, 180, "DIAG", Icons.Outlined.PrecisionManufacturing, "Assembly", "Unit 08")
-        )
-    }
-
+    val hasFile = selectedFileUri != null
     val modifiedCount = pages.count { it.rotation % 360 != 0 }
     val selectedCount = pages.count { it.isSelected }
 
-    // Helper functions for state modification
+    // PDF Picker Launcher
+    val pdfPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            selectedFileUri = it
+            isParsing = true
+            coroutineScope.launch(Dispatchers.IO) {
+                var name = "Unknown.pdf"
+                var sizeBytes = 0L
+
+                // Get Metadata
+                context.contentResolver.query(it, null, null, null, null)?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (cursor.moveToFirst()) {
+                        name = cursor.getString(nameIndex) ?: "Unknown.pdf"
+                        sizeBytes = cursor.getLong(sizeIndex)
+                    }
+                }
+
+                // Generate Thumbnails using Android Native PdfRenderer
+                val generatedPages = mutableListOf<RotatePage>()
+                try {
+                    context.contentResolver.openFileDescriptor(it, "r")?.use { fd ->
+                        val renderer = PdfRenderer(fd)
+                        val totalPages = renderer.pageCount
+                        for (i in 0 until totalPages) {
+                            val page = renderer.openPage(i)
+                            // Create a small, fast thumbnail canvas
+                            val bitmap = Bitmap.createBitmap(240, 320, Bitmap.Config.ARGB_8888)
+                            val canvas = Canvas(bitmap)
+                            canvas.drawColor(android.graphics.Color.WHITE)
+                            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            generatedPages.add(RotatePage(id = i + 1, isSelected = false, rotation = 0, thumbnail = bitmap))
+                            page.close()
+                        }
+                        renderer.close()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                withContext(Dispatchers.Main) {
+                    fileName = name
+                    fileSizeMb = Math.round((sizeBytes / (1024.0 * 1024.0)) * 10.0) / 10.0
+                    filePages = generatedPages.size
+                    pages.clear()
+                    pages.addAll(generatedPages)
+                    isParsing = false
+                }
+            }
+        }
+    }
+
     val updateScope = { scope: String ->
         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         activeScope = scope
@@ -131,7 +199,8 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
             if (shouldRotate) {
                 var newRot = (page.rotation + degrees) % 360
                 if (newRot < 0) newRot += 360
-                page.rotation = newRot
+                // Trigger recomposition
+                pages[index] = page.copy(rotation = newRot)
             }
         }
     }
@@ -139,34 +208,82 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
     Scaffold(
         containerColor = Surface,
         topBar = { RotateTopBar(onNavigateBack) },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            // Blueprint: Bottom Anchor (The Execution)
-            // Floating Status Notification stacked directly atop the execution bar
-            Column(modifier = Modifier.fillMaxWidth()) {
-                StatusNotificationBar(
-                    modifiedCount = modifiedCount,
-                    unchangedCount = 16 - modifiedCount
-                )
-                RotateBottomBar(isProcessing, processingComplete) {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    coroutineScope.launch {
-                        isProcessing = true
-                        delay(1200) // Simulated processing time
-                        isProcessing = false
-                        processingComplete = true
+            if (hasFile) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    StatusNotificationBar(
+                        modifiedCount = modifiedCount,
+                        unchangedCount = filePages - modifiedCount
+                    )
+                    RotateBottomBar(isProcessing, processingComplete, hasFile, filePages) {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        coroutineScope.launch(Dispatchers.IO) {
+                            isProcessing = true
+                            try {
+                                val cleanFileName = fileName.removeSuffix(".pdf")
+                                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                                val outputFile = File(downloadsDir, "${cleanFileName}_rotated_${System.currentTimeMillis()}.pdf")
 
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            val timings = longArrayOf(0, 80, 100, 120)
-                            val amplitudes = intArrayOf(0, 150, 0, 255)
-                            vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
-                        } else {
-                            @Suppress("DEPRECATION")
-                            vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                // PDFBox Rotation Engine
+                                context.contentResolver.openInputStream(selectedFileUri!!)?.use { inputStream ->
+                                    val document = PDDocument.load(inputStream, MemoryUsageSetting.setupMixed(50 * 1024 * 1024))
+
+                                    for (i in 0 until document.numberOfPages) {
+                                        val targetRotation = pages[i].rotation
+                                        if (targetRotation != 0) {
+                                            val pdPage = document.getPage(i)
+                                            // Add desired rotation to existing physical rotation
+                                            val currentRot = pdPage.rotation
+                                            pdPage.rotation = (currentRot + targetRotation) % 360
+                                        }
+                                    }
+
+                                    document.save(outputFile)
+                                    document.close()
+                                }
+
+                                withContext(Dispatchers.Main) {
+                                    isProcessing = false
+                                    processingComplete = true
+
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        val timings = longArrayOf(0, 80, 100, 120)
+                                        val amplitudes = intArrayOf(0, 150, 0, 255)
+                                        vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                                    } else {
+                                        @Suppress("DEPRECATION")
+                                        vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                    }
+
+                                    val result = snackbarHostState.showSnackbar(
+                                        message = "Success! Saved to Downloads",
+                                        actionLabel = "OPEN",
+                                        duration = SnackbarDuration.Long
+                                    )
+                                    if (result == SnackbarResult.ActionPerformed) {
+                                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", outputFile)
+                                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                                            setDataAndType(uri, "application/pdf")
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(Intent.createChooser(intent, "Open File"))
+                                    }
+                                    delay(1500)
+                                    processingComplete = false
+                                }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    isProcessing = false
+                                    snackbarHostState.showSnackbar("Rotation failed: ${e.localizedMessage}")
+                                }
+                            }
                         }
-
-                        delay(2200)
-                        processingComplete = false
                     }
+                }
+            } else {
+                RotateBottomBar(isProcessing = false, isComplete = false, hasFile = false, filePages = 0) {
+                    pdfPickerLauncher.launch(arrayOf("application/pdf"))
                 }
             }
         },
@@ -184,59 +301,72 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                // Blueprint: Center Stage (The Subject)
-                FileInfoCard(isProcessing = isProcessing)
+                FileInfoCard(
+                    hasFile = hasFile,
+                    fileName = fileName,
+                    fileSizeMb = fileSizeMb,
+                    filePages = filePages,
+                    isProcessing = isProcessing || isParsing,
+                    onChangeClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) }
+                )
 
-                // Blueprint: Control Deck (The Tools)
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    QuickRotationBar(
-                        onRotateCW = { rotateActive(90) },
-                        onRotateCCW = { rotateActive(-90) },
-                        onRotate180 = { rotateActive(180) }
-                    )
+                if (hasFile) {
+                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        QuickRotationBar(
+                            onRotateCW = { rotateActive(90) },
+                            onRotateCCW = { rotateActive(-90) },
+                            onRotate180 = { rotateActive(180) }
+                        )
 
-                    ScopeSelectorTabs(
-                        activeScope = activeScope,
-                        selectedCount = selectedCount,
-                        onScopeSelect = updateScope,
-                        onResetAll = {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            pages.forEach { it.rotation = 0 }
-                        }
-                    )
-                }
-
-                // Blueprint: The Canvas (The Workspace)
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    pages.chunked(2).forEach { rowPages ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            rowPages.forEach { page ->
-                                PageRotateTile(
-                                    page = page,
-                                    modifier = Modifier.weight(1f),
-                                    onSelectToggle = {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        page.isSelected = !page.isSelected
-                                    },
-                                    onRotateSingle = {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        var newRot = (page.rotation + 90) % 360
-                                        if (newRot < 0) newRot += 360
-                                        page.rotation = newRot
-                                    }
-                                )
+                        ScopeSelectorTabs(
+                            activeScope = activeScope,
+                            selectedCount = selectedCount,
+                            totalCount = filePages,
+                            onScopeSelect = updateScope,
+                            onResetAll = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                pages.forEachIndexed { index, page ->
+                                    pages[index] = page.copy(rotation = 0)
+                                }
                             }
-                            if (rowPages.size == 1) {
-                                Spacer(modifier = Modifier.weight(1f))
+                        )
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        pages.chunked(2).forEach { rowPages ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                rowPages.forEach { page ->
+                                    PageRotateTile(
+                                        page = page,
+                                        modifier = Modifier.weight(1f),
+                                        onSelectToggle = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            val idx = pages.indexOfFirst { it.id == page.id }
+                                            if (idx != -1) {
+                                                pages[idx] = page.copy(isSelected = !page.isSelected)
+                                            }
+                                        },
+                                        onRotateSingle = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            var newRot = (page.rotation + 90) % 360
+                                            if (newRot < 0) newRot += 360
+                                            val idx = pages.indexOfFirst { it.id == page.id }
+                                            if (idx != -1) {
+                                                pages[idx] = page.copy(rotation = newRot)
+                                            }
+                                        }
+                                    )
+                                }
+                                if (rowPages.size == 1) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
                             }
                         }
                     }
+
+                    ProTipCard()
+                    Spacer(modifier = Modifier.height(180.dp))
                 }
-
-                ProTipCard()
-
-                // Extra padding to ensure scrolling clears the floating bottom anchor
-                Spacer(modifier = Modifier.height(180.dp))
             }
         }
     }
@@ -268,7 +398,7 @@ private fun RotateTopBar(onNavigateBack: () -> Unit) {
 }
 
 @Composable
-private fun FileInfoCard(isProcessing: Boolean) {
+private fun FileInfoCard(hasFile: Boolean, fileName: String, fileSizeMb: Double, filePages: Int, isProcessing: Boolean, onChangeClick: () -> Unit) {
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val alphaPulse by infiniteTransition.animateFloat(
         initialValue = 1f, targetValue = if (isProcessing) 0.4f else 1f,
@@ -280,6 +410,7 @@ private fun FileInfoCard(isProcessing: Boolean) {
             .fillMaxWidth()
             .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
+            .clickable(enabled = !hasFile && !isProcessing) { onChangeClick() }
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -289,21 +420,30 @@ private fun FileInfoCard(isProcessing: Boolean) {
                 modifier = Modifier
                     .size(52.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(ErrorContainer)
+                    .background(if (hasFile) ErrorContainer else SurfaceContainerLow)
                     .alpha(alphaPulse),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(26.dp))
+                if (hasFile) {
+                    Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(26.dp))
+                } else {
+                    Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = Primary, modifier = Modifier.size(26.dp))
+                }
             }
             Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("Engineering_Schematics.pdf", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(modifier = Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("16 pages", fontSize = 12.sp, color = OnSurfaceVariant)
-                    Text(" • ", fontSize = 12.sp, color = OnSurfaceVariant)
-                    Text("6.4 MB", fontSize = 12.sp, color = OnSurfaceVariant)
-                    Spacer(modifier = Modifier.width(8.dp))
+                if (hasFile) {
+                    Text(fileName, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("$filePages pages", fontSize = 12.sp, color = OnSurfaceVariant)
+                        Text(" • ", fontSize = 12.sp, color = OnSurfaceVariant)
+                        Text("$fileSizeMb MB", fontSize = 12.sp, color = OnSurfaceVariant)
+                    }
+                } else {
+                    Text("No file selected", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text("Tap to browse storage", fontSize = 12.sp, color = OnSurfaceVariant)
                 }
             }
         }
@@ -311,10 +451,10 @@ private fun FileInfoCard(isProcessing: Boolean) {
             modifier = Modifier
                 .clip(RoundedCornerShape(50))
                 .background(SurfaceContainerLow)
-                .clickable(enabled = !isProcessing) { }
+                .clickable(enabled = !isProcessing) { onChangeClick() }
                 .padding(horizontal = 14.dp, vertical = 8.dp)
         ) {
-            Text("Change", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (isProcessing) OutlineVariant else Primary)
+            Text(if (hasFile) "Change" else "Select", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (isProcessing) OutlineVariant else Primary)
         }
     }
 }
@@ -326,7 +466,7 @@ private fun QuickRotationBar(onRotateCW: () -> Unit, onRotateCCW: () -> Unit, on
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             RotateActionButton(modifier = Modifier.weight(1f), icon = Icons.Outlined.RotateRight, title = "90° Right", subtitle = "Clockwise", onClick = onRotateCW)
             RotateActionButton(modifier = Modifier.weight(1f), icon = Icons.Outlined.RotateLeft, title = "90° Left", subtitle = "Anti Clockwise", onClick = onRotateCCW)
-            RotateActionButton(modifier = Modifier.weight(1f), icon = Icons.Outlined.FlipCameraAndroid, title = "180° Flip", subtitle = "Invert Page", onClick = onRotate180)
+            RotateActionButton(modifier = Modifier.weight(1f), icon = Icons.Outlined.FlipCameraAndroid, title = "180° Flip", subtitle = "Invert", onClick = onRotate180)
         }
     }
 }
@@ -338,7 +478,7 @@ private fun RotateActionButton(modifier: Modifier = Modifier, icon: androidx.com
             .shadow(1.dp, RoundedCornerShape(16.dp))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .clickable { onClick() }
-            .padding(vertical = 16.dp, horizontal = 8.dp),
+            .padding(vertical = 16.dp, horizontal = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
@@ -354,7 +494,7 @@ private fun RotateActionButton(modifier: Modifier = Modifier, icon: androidx.com
 }
 
 @Composable
-private fun ScopeSelectorTabs(activeScope: String, selectedCount: Int, onScopeSelect: (String) -> Unit, onResetAll: () -> Unit) {
+private fun ScopeSelectorTabs(activeScope: String, selectedCount: Int, totalCount: Int, onScopeSelect: (String) -> Unit, onResetAll: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("APPLY SCOPE", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = OnSurface, letterSpacing = 0.5.sp)
@@ -365,7 +505,7 @@ private fun ScopeSelectorTabs(activeScope: String, selectedCount: Int, onScopeSe
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             ScopePill("Selected ($selectedCount)", isActive = activeScope == "selected") { onScopeSelect("selected") }
-            ScopePill("All Pages (16)", isActive = activeScope == "all") { onScopeSelect("all") }
+            ScopePill("All Pages ($totalCount)", isActive = activeScope == "all") { onScopeSelect("all") }
             ScopePill("Odd Pages", isActive = activeScope == "odd") { onScopeSelect("odd") }
             ScopePill("Even Pages", isActive = activeScope == "even") { onScopeSelect("even") }
         }
@@ -385,7 +525,9 @@ private fun ScopePill(text: String, isActive: Boolean, onClick: () -> Unit) {
             .clickable { onClick() }
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = textColor)
+        AnimatedContent(targetState = text, label = "scopeText") { targetText ->
+            Text(targetText, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = textColor)
+        }
     }
 }
 
@@ -425,42 +567,24 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
                 .aspectRatio(0.75f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(SurfaceContainerLow)
-                .padding(12.dp)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .rotate(animatedRotation),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(24.dp).clip(RoundedCornerShape(6.dp)).background(if(page.isSelected) PrimaryFixed else SurfaceVariant), contentAlignment = Alignment.Center) {
-                        Text(page.label, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Primary)
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(modifier = Modifier.height(4.dp).width(36.dp).clip(RoundedCornerShape(50)).background(OutlineVariant.copy(alpha = 0.6f)))
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(modifier = Modifier.height(6.dp).fillMaxWidth().clip(RoundedCornerShape(50)).background(OutlineVariant.copy(alpha = 0.4f)))
-                    Box(modifier = Modifier.height(6.dp).fillMaxWidth(0.8f).clip(RoundedCornerShape(50)).background(OutlineVariant.copy(alpha = 0.4f)))
-                    Box(modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(6.dp)).background(SurfaceContainer), contentAlignment = Alignment.Center) {
-                        Icon(page.icon, contentDescription = null, tint = Primary.copy(alpha = 0.8f), modifier = Modifier.size(24.dp))
-                    }
-                }
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(page.desc1, fontSize = 9.sp, color = OnSurfaceVariant)
-                    Text(page.desc2, fontSize = 9.sp, color = OnSurfaceVariant)
-                }
+            if (page.thumbnail != null) {
+                Image(
+                    bitmap = page.thumbnail.asImageBitmap(),
+                    contentDescription = "Thumbnail for Page ${page.id}",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .rotate(animatedRotation)
+                )
             }
 
             if (page.isSelected) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .offset(x = 6.dp, y = (-6).dp)
-                        .size(26.dp)
+                        .padding(6.dp)
+                        .size(24.dp)
                         .shadow(2.dp, CircleShape)
                         .clip(CircleShape)
                         .background(Primary),
@@ -496,7 +620,6 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
 
 @Composable
 private fun StatusNotificationBar(modifiedCount: Int, unchangedCount: Int) {
-    // Redesigned to act as a floating HUD pill directly above the bottom execution bar
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -563,10 +686,22 @@ private fun ProTipCard() {
 }
 
 @Composable
-private fun RotateBottomBar(isProcessing: Boolean, isComplete: Boolean, onApplyClick: () -> Unit) {
-    val buttonText = if (isComplete) "Saved to Documents" else "Apply & Save Rotated PDF"
-    val buttonIcon = if (isComplete) Icons.Outlined.CheckCircle else Icons.Outlined.SaveAs
-    val buttonColor = if (isComplete) Secondary else Primary
+private fun RotateBottomBar(isProcessing: Boolean, isComplete: Boolean, hasFile: Boolean, filePages: Int, onApplyClick: () -> Unit) {
+    val buttonText = when {
+        !hasFile -> "Select a PDF to Rotate"
+        isProcessing -> "Rebuilding Blueprint PDF..."
+        isComplete -> "Saved to Documents"
+        else -> "Apply & Save Rotated PDF"
+    }
+
+    val buttonIcon = when {
+        !hasFile -> Icons.Outlined.Folder
+        isComplete -> Icons.Outlined.CheckCircle
+        else -> Icons.Outlined.SaveAs
+    }
+
+    val buttonColor = if (isComplete) Secondary else if (hasFile) Primary else SurfaceContainerHigh
+    val contentColor = if (hasFile || isComplete) OnPrimary else OutlineVariant
 
     val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 16.dp, label = "buttonShape")
 
@@ -577,13 +712,17 @@ private fun RotateBottomBar(isProcessing: Boolean, isComplete: Boolean, onApplyC
             .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
             .navigationBarsPadding()
     ) {
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Primary))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Ready to export 16-page PDF", fontSize = 12.sp, color = OnSurfaceVariant)
+        if (hasFile) {
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Primary))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Ready to export $filePages-page PDF", fontSize = 12.sp, color = OnSurfaceVariant)
+                }
+                Text("Original Quality Retained", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Primary)
             }
-            Text("Original Quality Retained", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Primary)
+        } else {
+            Spacer(modifier = Modifier.height(16.dp))
         }
 
         Box(
@@ -592,7 +731,7 @@ private fun RotateBottomBar(isProcessing: Boolean, isComplete: Boolean, onApplyC
                 .padding(bottom = 16.dp)
                 .fillMaxWidth()
                 .height(56.dp)
-                .shadow(if (!isComplete && !isProcessing) 12.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = buttonColor.copy(alpha = 0.4f))
+                .shadow(if (hasFile && !isComplete && !isProcessing) 12.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = buttonColor.copy(alpha = 0.4f))
                 .clip(RoundedCornerShape(cornerRadius))
                 .background(buttonColor)
                 .clickable(enabled = !isProcessing && !isComplete) { onApplyClick() },
@@ -604,12 +743,12 @@ private fun RotateBottomBar(isProcessing: Boolean, isComplete: Boolean, onApplyC
             ) { states ->
                 val (processing, _) = states
                 if (processing) {
-                    CircularProgressIndicator(color = OnPrimary, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                    CircularProgressIndicator(color = contentColor, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(buttonIcon, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(24.dp))
+                        Icon(buttonIcon, contentDescription = null, tint = contentColor, modifier = Modifier.size(24.dp))
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
+                        Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                     }
                 }
             }
