@@ -1,10 +1,15 @@
 package com.subha.fileease.ui.screens
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -54,10 +59,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import com.tom_roush.pdfbox.pdmodel.PDDocument
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 // Exact color tokens from the Stitch HTML Tailwind config
 private val Surface = Color(0xFFFAF8FF)
@@ -89,7 +102,9 @@ data class ExtractPage(
 fun PdfExtractScreen(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
+    val vibrator = remember { context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator }
     val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // Hardware & File State Management
     var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
@@ -185,19 +200,98 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
     Scaffold(
         containerColor = Surface,
         topBar = { ExtractTopBar(onNavigateBack) },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             ExtractBottomBar(selectedCount, isProcessing, processingComplete, hasFile) {
-                if (hasFile) {
+                if (hasFile && selectedCount > 0) {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    coroutineScope.launch {
+                    coroutineScope.launch(Dispatchers.IO) {
                         isProcessing = true
-                        delay(1200) // Simulated processing time
-                        isProcessing = false
-                        processingComplete = true
-                        delay(2000)
-                        processingComplete = false
+                        try {
+                            val cleanFileName = fileName.removeSuffix(".pdf")
+                            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+
+                            val selectedIndices = pages.filter { it.isSelected }.map { it.id - 1 }
+                            var finalOutputFile: File? = null
+                            var finalMimeType = "application/pdf"
+
+                            context.contentResolver.openInputStream(selectedFileUri!!)?.use { inputStream ->
+                                val sourceDoc = PDDocument.load(inputStream, MemoryUsageSetting.setupMixed(50 * 1024 * 1024))
+
+                                if (extractionMode == "single") {
+                                    val outputFile = File(downloadsDir, "${cleanFileName}_extracted_${System.currentTimeMillis()}.pdf")
+                                    val targetDoc = PDDocument()
+                                    for (i in selectedIndices) {
+                                        if (i < sourceDoc.numberOfPages) {
+                                            targetDoc.addPage(sourceDoc.getPage(i))
+                                        }
+                                    }
+                                    targetDoc.save(outputFile)
+                                    targetDoc.close()
+                                    finalOutputFile = outputFile
+                                    finalMimeType = "application/pdf"
+                                } else {
+                                    val outputFile = File(downloadsDir, "${cleanFileName}_extracted_${System.currentTimeMillis()}.zip")
+                                    ZipOutputStream(FileOutputStream(outputFile)).use { zos ->
+                                        for (i in selectedIndices) {
+                                            if (i < sourceDoc.numberOfPages) {
+                                                val tempDoc = PDDocument()
+                                                tempDoc.addPage(sourceDoc.getPage(i))
+                                                val baos = ByteArrayOutputStream()
+                                                tempDoc.save(baos)
+                                                tempDoc.close()
+
+                                                val entry = ZipEntry("${cleanFileName}_page_${i + 1}.pdf")
+                                                zos.putNextEntry(entry)
+                                                zos.write(baos.toByteArray())
+                                                zos.closeEntry()
+                                            }
+                                        }
+                                    }
+                                    finalOutputFile = outputFile
+                                    finalMimeType = "application/zip"
+                                }
+                                sourceDoc.close()
+                            }
+
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                processingComplete = true
+
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    val timings = longArrayOf(0, 80, 100, 120)
+                                    val amplitudes = intArrayOf(0, 150, 0, 255)
+                                    vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                }
+
+                                val result = snackbarHostState.showSnackbar(
+                                    message = "Success! Saved to Downloads",
+                                    actionLabel = "OPEN",
+                                    duration = SnackbarDuration.Long
+                                )
+
+                                if (result == SnackbarResult.ActionPerformed && finalOutputFile != null) {
+                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", finalOutputFile!!)
+                                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(uri, finalMimeType)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(intent, "Open File"))
+                                }
+                                delay(2000)
+                                processingComplete = false
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                snackbarHostState.showSnackbar("Extraction failed: ${e.localizedMessage}")
+                            }
+                        }
                     }
-                } else {
+                } else if (!hasFile) {
                     pdfPickerLauncher.launch(arrayOf("application/pdf"))
                 }
             }
@@ -216,6 +310,7 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+
                 SourceDocumentStatusCard(
                     hasFile = hasFile,
                     fileName = fileName,
@@ -251,7 +346,7 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                             Text("Tap card to toggle", fontSize = 10.sp, color = Outline)
                         }
 
-                        val visiblePages = pages.take(50) // Render cap
+                        val visiblePages = pages.take(50)
                         visiblePages.chunked(3).forEach { rowPages ->
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 rowPages.forEach { page ->
@@ -339,7 +434,6 @@ private fun ExtractTopBar(onNavigateBack: () -> Unit) {
             .fillMaxWidth()
             .background(Surface.copy(alpha = 0.95f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .statusBarsPadding()
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -353,7 +447,7 @@ private fun ExtractTopBar(onNavigateBack: () -> Unit) {
             }
             Spacer(modifier = Modifier.width(4.dp))
             Column {
-                Text("Extract Pages", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+                Text("Extract Pages", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
             }
         }
     }
@@ -527,7 +621,6 @@ private fun ExtractPageTile(page: ExtractPage, modifier: Modifier = Modifier, on
                     modifier = Modifier.fillMaxSize().alpha(if (page.isSelected) 1f else 0.8f)
                 )
             } else {
-                // Fallback for missing/hidden thumbnails
                 Column(modifier = Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.SpaceBetween) {
                     Spacer(modifier = Modifier.height(10.dp))
                     Box(modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(6.dp)).background(SurfaceContainer), contentAlignment = Alignment.Center) {
@@ -537,7 +630,6 @@ private fun ExtractPageTile(page: ExtractPage, modifier: Modifier = Modifier, on
                 }
             }
 
-            // Check Overlay
             Row(modifier = Modifier.fillMaxWidth().padding(6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(SurfaceContainerLowest.copy(alpha = 0.9f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
                     Text("P.${page.id}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = pColor)
