@@ -29,7 +29,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.draw.alpha
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -72,6 +71,7 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
         containerColor = Surface,
         topBar = { PasswordTopBar(onNavigateBack) },
         bottomBar = {
+            // Blueprint: The Command Anchor outside the scrollable area
             PasswordBottomBar(isProcessing, isComplete) {
                 coroutineScope.launch {
                     isProcessing = true
@@ -82,7 +82,8 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
                     isComplete = false
                 }
             }
-        }
+        },
+        contentWindowInsets = WindowInsets(0.dp) // Blueprint: Immersive Bleed foundation
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -95,22 +96,22 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
-                    .padding(top = 12.dp, bottom = 8.dp)
+                    .padding(top = 16.dp, bottom = 8.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.LockReset, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("SECURITY MODULE", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Primary, letterSpacing = 0.5.sp)
                 }
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text("Encrypt and secure your documents with offline cryptographic keys.", fontSize = 13.sp, color = OnSurfaceVariant)
             }
 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp) // Enhanced spacing for depth
             ) {
                 // 1. File Overview Card
                 FileOverviewCard()
@@ -139,7 +140,8 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
                     allowAnnotations = allowAnnotations, onAnnotToggle = { allowAnnotations = !allowAnnotations }
                 )
 
-                Spacer(modifier = Modifier.height(32.dp))
+                // Extra padding to ensure scrolling clears the floating bottom anchor
+                Spacer(modifier = Modifier.height(112.dp))
             }
         }
     }
@@ -150,8 +152,9 @@ private fun PasswordTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.9f))
+            .background(SurfaceContainerLowest.copy(alpha = 0.95f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
+            .statusBarsPadding() // Blueprint: Immersive Bleed
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -168,7 +171,7 @@ private fun PasswordTopBar(onNavigateBack: () -> Unit) {
             }
             Spacer(modifier = Modifier.width(4.dp))
             Column {
-                Text("Pdf Password", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface) // Kept exact HTML typo per your instructions
+                Text("Pdf Password", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Primary))
                     Spacer(modifier = Modifier.width(6.dp))
@@ -193,8 +196,8 @@ private fun FileOverviewCard() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(12.dp))
-            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -209,6 +212,7 @@ private fun FileOverviewCard() {
             Spacer(modifier = Modifier.width(12.dp))
             Column {
                 Text("Confidential_Executive_Brief.pdf", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(modifier = Modifier.height(2.dp))
                 Text("12 pages • 2.4 MB", fontSize = 12.sp, color = OnSurfaceVariant)
             }
         }
@@ -228,13 +232,13 @@ private fun SecurityBadgeBanner() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(SurfaceContainer)
             .padding(16.dp),
         verticalAlignment = Alignment.Top
     ) {
         Box(
-            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLowest).shadow(1.dp, RoundedCornerShape(8.dp)),
+            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(SurfaceContainerLowest).shadow(2.dp, RoundedCornerShape(10.dp)),
             contentAlignment = Alignment.Center
         ) {
             Icon(Icons.Filled.EnhancedEncryption, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
@@ -259,8 +263,8 @@ private fun PasswordSetupCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(12.dp))
-            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -327,17 +331,17 @@ private fun PasswordSetupCard(
         // Owner Password Section
         Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
             Row(
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).clickable { onOwnerToggle() }.padding(12.dp),
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(SurfaceContainerLow).clickable { onOwnerToggle() }.padding(12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLowest), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Outlined.AdminPanelSettings, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
+                    Box(modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLowest), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Outlined.AdminPanelSettings, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text("Permissions Password (Owner)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                        Text("Restricts modification rights", fontSize = 10.sp, color = OnSurfaceVariant)
+                        Text("Restricts modification rights", fontSize = 11.sp, color = OnSurfaceVariant)
                     }
                 }
                 CustomSwitch(isChecked = isOwnerEnabled)
@@ -360,7 +364,7 @@ private fun PasswordSetupCard(
                             }
                         }
                     )
-                    Text("Required if recipients need to change these document permissions later.", fontSize = 10.sp, color = OnSurfaceVariant)
+                    Text("Required if recipients need to change these document permissions later.", fontSize = 11.sp, color = OnSurfaceVariant)
                 }
             }
         }
@@ -384,7 +388,7 @@ private fun CustomPasswordField(value: String, onValueChange: (String) -> Unit, 
                     if (value.isEmpty()) Text(placeholder, fontSize = 13.sp, color = OnSurfaceVariant)
                     innerTextField()
                 }
-                Box(modifier = Modifier.size(24.dp).clip(CircleShape).clickable { onVisibilityToggle() }, contentAlignment = Alignment.Center) {
+                Box(modifier = Modifier.size(28.dp).clip(CircleShape).clickable { onVisibilityToggle() }, contentAlignment = Alignment.Center) {
                     Icon(if (isVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(20.dp))
                 }
             }
@@ -401,11 +405,11 @@ private fun PermissionsCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(12.dp))
-            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(16.dp)
     ) {
-        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.VerifiedUser, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
                 Spacer(modifier = Modifier.width(6.dp))
@@ -418,7 +422,7 @@ private fun PermissionsCard(
         PermissionRow(Icons.Outlined.ContentPasteOff, "Allow Content Copying & Extraction", "Block clipboard copying and screen scrapers", allowCopying, onCopyToggle)
         PermissionRow(Icons.Outlined.ModeComment, "Allow Page Annotations & Comments", "Reviewers may highlight and write notes", allowAnnotations, onAnnotToggle)
 
-        Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Verified, contentDescription = null, tint = Primary, modifier = Modifier.size(15.dp))
             Spacer(modifier = Modifier.width(6.dp))
             Text("Compatible with Adobe Acrobat, Apple Preview, and all standard readers", fontSize = 10.sp, color = OnSurfaceVariant)
@@ -432,16 +436,17 @@ private fun PermissionRow(icon: ImageVector, title: String, subtitle: String, is
     val iconTint = if (isChecked) OnSurface else Outline
 
     Row(
-        modifier = Modifier.fillMaxWidth().clickable { onToggle() }.padding(vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onToggle() }.padding(vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
     ) {
         Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(iconBg), contentAlignment = Alignment.Center) {
-                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
+            Box(modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(iconBg), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(22.dp))
             }
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(12.dp))
             Column {
                 Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(subtitle, fontSize = 12.sp, color = OnSurfaceVariant)
             }
         }
@@ -451,7 +456,7 @@ private fun PermissionRow(icon: ImageVector, title: String, subtitle: String, is
 
 @Composable
 private fun CustomSwitch(isChecked: Boolean) {
-    val offset by animateFloatAsState(targetValue = if (isChecked) 20f else 0f)
+    val offset by animateFloatAsState(targetValue = if (isChecked) 20f else 0f, label = "switch")
     val bgColor = if (isChecked) Primary else SurfaceContainerHighest
 
     Box(modifier = Modifier.width(44.dp).height(24.dp).clip(RoundedCornerShape(50)).background(bgColor).padding(2.dp)) {
@@ -466,40 +471,42 @@ private fun PasswordBottomBar(isProcessing: Boolean, isComplete: Boolean, onClic
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.95f))
-            .shadow(elevation = 16.dp, spotColor = OnSurface.copy(alpha = 0.06f))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .background(SurfaceContainerLowest.copy(alpha = 0.98f))
+            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
+            .navigationBarsPadding() // Blueprint: Anchor bottom spacing for gestures
     ) {
         Box(
             modifier = Modifier
+                .padding(horizontal = 16.dp)
+                .padding(top = 16.dp, bottom = 12.dp)
                 .fillMaxWidth()
-                .height(48.dp)
-                .shadow(10.dp, RoundedCornerShape(12.dp), spotColor = PrimaryContainer.copy(alpha = 0.35f))
-                .clip(RoundedCornerShape(12.dp))
+                .height(56.dp) // Blueprint: 56dp robust execution height
+                .shadow(if (!isComplete) 8.dp else 0.dp, RoundedCornerShape(16.dp), spotColor = buttonColor.copy(alpha = 0.35f))
+                .clip(RoundedCornerShape(16.dp))
                 .background(buttonColor)
                 .clickable(enabled = !isProcessing && !isComplete) { onClick() },
             contentAlignment = Alignment.Center
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isProcessing) {
-                    CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(8.dp))
+                    CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                    Spacer(modifier = Modifier.width(10.dp))
                     Text("Encrypting Document...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
                 } else if (isComplete) {
-                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Primary, modifier = Modifier.size(22.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Primary, modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Text("PDF Secured!", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Primary)
                 } else {
-                    Icon(Icons.Filled.EnhancedEncryption, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(22.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(Icons.Filled.EnhancedEncryption, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Text("Encrypt & Protect PDF", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
                 }
             }
         }
-        Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Speed, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(14.dp))
+        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.Speed, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(4.dp))
-            Text("Estimated completion: ~0.4s on device", fontSize = 10.sp, color = OnSurfaceVariant)
+            Text("Estimated completion: ~0.4s on device", fontSize = 11.sp, color = OnSurfaceVariant)
         }
     }
 }
