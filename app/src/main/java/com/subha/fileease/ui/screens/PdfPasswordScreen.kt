@@ -72,8 +72,8 @@ private val OnPrimaryContainer = Color(0xFFF8F7FF)
 private val ErrorContainer = Color(0xFFFFDAD6)
 private val OnErrorContainer = Color(0xFF93000A)
 private val Outline = Color(0xFF727687)
-private val OutlineVariant = Color(0xFFC2C6D8) // Fixed: Missing token
-private val Secondary = Color(0xFF0058BE)      // Fixed: Missing token
+private val OutlineVariant = Color(0xFFC2C6D8)
+private val Secondary = Color(0xFF0058BE)
 
 @Composable
 fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
@@ -166,7 +166,7 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
                             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                             val outputFile = File(downloadsDir, "${cleanFileName}_secured_${System.currentTimeMillis()}.pdf")
 
-                            // Phase 4: PDFBox Cryptographic Engine
+                            // PDFBox Cryptographic Engine
                             context.contentResolver.openInputStream(selectedFileUri!!)?.use { inputStream ->
                                 val document = PDDocument.load(inputStream, MemoryUsageSetting.setupMixed(50 * 1024 * 1024))
 
@@ -238,22 +238,7 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .padding(top = 16.dp, bottom = 8.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.LockReset, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("SECURITY MODULE", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Primary, letterSpacing = 0.5.sp)
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text("Encrypt and secure your documents with offline cryptographic keys.", fontSize = 13.sp, color = OnSurfaceVariant)
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 FileOverviewCard(
@@ -318,40 +303,20 @@ private fun PasswordTopBar(onNavigateBack: () -> Unit) {
             .fillMaxWidth()
             .background(SurfaceContainerLowest.copy(alpha = 0.95f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .statusBarsPadding()
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .clickable { onNavigateBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Column {
-                Text("Pdf Password", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Primary))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Offline Engine Active • 100% On-device", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary, letterSpacing = 0.5.sp)
-                }
-            }
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .clickable { onNavigateBack() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(44.dp).clip(CircleShape).clickable { }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Info, contentDescription = "Info", tint = OnSurfaceVariant)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(Primary), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Person, contentDescription = "User", tint = OnPrimary, modifier = Modifier.size(18.dp))
-            }
-        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Text("Pdf Password", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
     }
 }
 
@@ -524,7 +489,7 @@ private fun PasswordSetupCard(
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
-                        Text("Permissions Password", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                        Text("Permissions Password (Owner)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
                         Text("Restricts modification rights", fontSize = 11.sp, color = OnSurfaceVariant)
                     }
                 }
