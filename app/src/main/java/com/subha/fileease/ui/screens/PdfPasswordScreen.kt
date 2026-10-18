@@ -1,5 +1,16 @@
 package com.subha.fileease.ui.screens
 
+import android.content.Context
+import android.content.Intent
+import android.graphics.pdf.PdfRenderer
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
@@ -25,6 +36,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -33,8 +45,16 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.encryption.AccessPermission
+import com.tom_roush.pdfbox.pdmodel.encryption.StandardProtectionPolicy
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 // Exact color tokens from the Stitch HTML Tailwind config
 private val Surface = Color(0xFFFAF8FF)
@@ -52,19 +72,31 @@ private val OnPrimaryContainer = Color(0xFFF8F7FF)
 private val ErrorContainer = Color(0xFFFFDAD6)
 private val OnErrorContainer = Color(0xFF93000A)
 private val Outline = Color(0xFF727687)
+private val OutlineVariant = Color(0xFFC2C6D8) // Fixed: Missing token
+private val Secondary = Color(0xFF0058BE)      // Fixed: Missing token
 
 @Composable
 fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
+    val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
+    val vibrator = remember { context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator }
     val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Hardware & File State Management
+    var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
+    var fileName by remember { mutableStateOf("") }
+    var fileSizeMb by remember { mutableDoubleStateOf(0.0) }
+    var filePages by remember { mutableIntStateOf(0) }
+    val hasFile = selectedFileUri != null
 
     // State Management for inputs and toggles
-    var openPassword by remember { mutableStateOf("Vault#Secure99") }
-    var confirmPassword by remember { mutableStateOf("Vault#Secure99") }
+    var openPassword by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
     var isOpenPasswordVisible by remember { mutableStateOf(false) }
 
     var isOwnerEnabled by remember { mutableStateOf(true) }
-    var ownerPassword by remember { mutableStateOf("AdminMaster#2024") }
+    var ownerPassword by remember { mutableStateOf("") }
 
     var allowPrinting by remember { mutableStateOf(true) }
     var allowCopying by remember { mutableStateOf(false) }
@@ -73,25 +105,129 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
 
+    // The Document Picker & Background Metadata Extraction
+    val pdfPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            selectedFileUri = it
+            coroutineScope.launch(Dispatchers.IO) {
+                var name = "Unknown.pdf"
+                var sizeBytes = 0L
+
+                context.contentResolver.query(it, null, null, null, null)?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (cursor.moveToFirst()) {
+                        name = cursor.getString(nameIndex) ?: "Unknown.pdf"
+                        sizeBytes = cursor.getLong(sizeIndex)
+                    }
+                }
+
+                var pages = 0
+                try {
+                    context.contentResolver.openFileDescriptor(it, "r")?.use { fd ->
+                        val renderer = PdfRenderer(fd)
+                        pages = renderer.pageCount
+                        renderer.close()
+                    }
+                } catch (e: Exception) { e.printStackTrace() }
+
+                withContext(Dispatchers.Main) {
+                    fileName = name
+                    fileSizeMb = Math.round((sizeBytes / (1024.0 * 1024.0)) * 10.0) / 10.0
+                    filePages = pages
+                }
+            }
+        }
+    }
+
     Scaffold(
         containerColor = Surface,
         topBar = { PasswordTopBar(onNavigateBack) },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            // Blueprint: The Command Anchor outside the scrollable area
-            PasswordBottomBar(isProcessing, isComplete) {
-                // Tactile Feedback: Heavy Execution Anchor
-                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                coroutineScope.launch {
-                    isProcessing = true
-                    delay(700)
-                    isProcessing = false
-                    isComplete = true
-                    delay(2200)
-                    isComplete = false
+            PasswordBottomBar(isProcessing, isComplete, hasFile) {
+                if (hasFile) {
+                    if (openPassword.isBlank()) {
+                        coroutineScope.launch { snackbarHostState.showSnackbar("Open Password is required") }
+                        return@PasswordBottomBar
+                    }
+                    if (openPassword != confirmPassword) {
+                        coroutineScope.launch { snackbarHostState.showSnackbar("Passwords do not match") }
+                        return@PasswordBottomBar
+                    }
+
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    coroutineScope.launch(Dispatchers.IO) {
+                        isProcessing = true
+                        try {
+                            val cleanFileName = fileName.removeSuffix(".pdf")
+                            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                            val outputFile = File(downloadsDir, "${cleanFileName}_secured_${System.currentTimeMillis()}.pdf")
+
+                            // Phase 4: PDFBox Cryptographic Engine
+                            context.contentResolver.openInputStream(selectedFileUri!!)?.use { inputStream ->
+                                val document = PDDocument.load(inputStream, MemoryUsageSetting.setupMixed(50 * 1024 * 1024))
+
+                                val ap = AccessPermission()
+                                ap.setCanPrint(allowPrinting)
+                                ap.setCanExtractContent(allowCopying)
+                                ap.setCanModifyAnnotations(allowAnnotations)
+
+                                // If owner password is empty/disabled, fallback to the open password
+                                val actualOwnerPwd = if (isOwnerEnabled && ownerPassword.isNotBlank()) ownerPassword else openPassword
+
+                                val spp = StandardProtectionPolicy(actualOwnerPwd, openPassword, ap)
+                                spp.encryptionKeyLength = 256 // Enforce maximum AES-256 security
+
+                                document.protect(spp)
+                                document.save(outputFile)
+                                document.close()
+                            }
+
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                isComplete = true
+
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    val timings = longArrayOf(0, 80, 100, 120)
+                                    val amplitudes = intArrayOf(0, 150, 0, 255)
+                                    vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                }
+
+                                val result = snackbarHostState.showSnackbar(
+                                    message = "Success! Secured PDF saved to Downloads",
+                                    actionLabel = "OPEN",
+                                    duration = SnackbarDuration.Long
+                                )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", outputFile)
+                                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(uri, "application/pdf")
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(intent, "Open File"))
+                                }
+                                delay(1500)
+                                isComplete = false
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                snackbarHostState.showSnackbar("Encryption failed: ${e.localizedMessage}")
+                            }
+                        }
+                    }
+                } else {
+                    pdfPickerLauncher.launch(arrayOf("application/pdf"))
                 }
             }
         },
-        contentWindowInsets = WindowInsets(0.dp) // Blueprint: Immersive Bleed foundation
+        contentWindowInsets = WindowInsets(0.dp)
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -99,7 +235,6 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
         ) {
-            // Subtitle Banner
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -119,54 +254,57 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp) // Enhanced spacing for depth
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // 1. File Overview Card
-                FileOverviewCard()
-
-                // 2. Security Badge Banner
-                SecurityBadgeBanner()
-
-                // 3. Password Setup Form Card
-                PasswordSetupCard(
-                    openPassword = openPassword,
-                    onOpenPasswordChange = { openPassword = it },
-                    confirmPassword = confirmPassword,
-                    onConfirmPasswordChange = { confirmPassword = it },
-                    isVisible = isOpenPasswordVisible,
-                    onVisibilityToggle = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        isOpenPasswordVisible = !isOpenPasswordVisible
-                    },
-                    isOwnerEnabled = isOwnerEnabled,
-                    onOwnerToggle = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        isOwnerEnabled = !isOwnerEnabled
-                    },
-                    ownerPassword = ownerPassword,
-                    onOwnerPasswordChange = { ownerPassword = it }
+                FileOverviewCard(
+                    hasFile = hasFile,
+                    fileName = fileName,
+                    fileSizeMb = fileSizeMb,
+                    filePages = filePages,
+                    onChangeClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) }
                 )
 
-                // 4. Granular Permissions Card
-                PermissionsCard(
-                    allowPrinting = allowPrinting,
-                    onPrintToggle = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        allowPrinting = !allowPrinting
-                    },
-                    allowCopying = allowCopying,
-                    onCopyToggle = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        allowCopying = !allowCopying
-                    },
-                    allowAnnotations = allowAnnotations,
-                    onAnnotToggle = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        allowAnnotations = !allowAnnotations
-                    }
-                )
+                if (hasFile) {
+                    SecurityBadgeBanner()
 
-                // Extra padding to ensure scrolling clears the floating bottom anchor
+                    PasswordSetupCard(
+                        openPassword = openPassword,
+                        onOpenPasswordChange = { openPassword = it },
+                        confirmPassword = confirmPassword,
+                        onConfirmPasswordChange = { confirmPassword = it },
+                        isVisible = isOpenPasswordVisible,
+                        onVisibilityToggle = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            isOpenPasswordVisible = !isOpenPasswordVisible
+                        },
+                        isOwnerEnabled = isOwnerEnabled,
+                        onOwnerToggle = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            isOwnerEnabled = !isOwnerEnabled
+                        },
+                        ownerPassword = ownerPassword,
+                        onOwnerPasswordChange = { ownerPassword = it }
+                    )
+
+                    PermissionsCard(
+                        allowPrinting = allowPrinting,
+                        onPrintToggle = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            allowPrinting = !allowPrinting
+                        },
+                        allowCopying = allowCopying,
+                        onCopyToggle = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            allowCopying = !allowCopying
+                        },
+                        allowAnnotations = allowAnnotations,
+                        onAnnotToggle = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            allowAnnotations = !allowAnnotations
+                        }
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(112.dp))
             }
         }
@@ -180,7 +318,7 @@ private fun PasswordTopBar(onNavigateBack: () -> Unit) {
             .fillMaxWidth()
             .background(SurfaceContainerLowest.copy(alpha = 0.95f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .statusBarsPadding() // Blueprint: Immersive Bleed
+            .statusBarsPadding()
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -218,37 +356,56 @@ private fun PasswordTopBar(onNavigateBack: () -> Unit) {
 }
 
 @Composable
-private fun FileOverviewCard() {
+private fun FileOverviewCard(hasFile: Boolean, fileName: String, fileSizeMb: Double, filePages: Int, onChangeClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
+            .clickable(enabled = !hasFile) { onChangeClick() }
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
             Box(
-                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(ErrorContainer),
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (hasFile) ErrorContainer else SurfaceContainerLow),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(26.dp))
+                if (hasFile) {
+                    Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(26.dp))
+                } else {
+                    Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = Primary, modifier = Modifier.size(26.dp))
+                }
             }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
-                Text("Confidential_Executive_Brief.pdf", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(modifier = Modifier.height(2.dp))
-                Text("12 pages • 2.4 MB", fontSize = 12.sp, color = OnSurfaceVariant)
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                if (hasFile) {
+                    Text(fileName, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("$filePages pages", fontSize = 12.sp, color = OnSurfaceVariant)
+                        Text(" • ", fontSize = 12.sp, color = OnSurfaceVariant)
+                        Text("$fileSizeMb MB", fontSize = 12.sp, color = OnSurfaceVariant)
+                    }
+                } else {
+                    Text("No file selected", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text("Tap to browse storage", fontSize = 12.sp, color = OnSurfaceVariant)
+                }
             }
         }
-        Row(
-            modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainer).padding(horizontal = 10.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(SurfaceContainerLow)
+                .clickable { onChangeClick() }
+                .padding(horizontal = 14.dp, vertical = 8.dp)
         ) {
-            Icon(Icons.Outlined.Shield, contentDescription = null, tint = Primary, modifier = Modifier.size(14.dp))
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("AES-256", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+            Text(if (hasFile) "Change" else "Select", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Primary)
         }
     }
 }
@@ -289,7 +446,7 @@ private fun PasswordSetupCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -305,7 +462,6 @@ private fun PasswordSetupCard(
             }
         }
 
-        // Open Password
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Open Password", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
             CustomPasswordField(
@@ -313,22 +469,22 @@ private fun PasswordSetupCard(
                 icon = Icons.Outlined.Password, placeholder = "Enter unlock password",
                 isVisible = isVisible, onVisibilityToggle = onVisibilityToggle
             )
-            // Strength Meter
             Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Password Strength", fontSize = 10.sp, color = OnSurfaceVariant)
-                    Text("Strong (High Entropy)", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                    val strengthText = if(openPassword.length > 7) "Strong (High Entropy)" else if(openPassword.length > 3) "Medium" else "Weak"
+                    Text(strengthText, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)).background(SurfaceContainerHigh), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Box(modifier = Modifier.weight(1f).fillMaxHeight().background(Primary))
-                    Box(modifier = Modifier.weight(1f).fillMaxHeight().background(Primary))
-                    Box(modifier = Modifier.weight(1f).fillMaxHeight().background(Primary))
+                    val strength = openPassword.length
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight().background(if(strength > 0) Primary else Color.Transparent))
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight().background(if(strength > 3) Primary else Color.Transparent))
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight().background(if(strength > 7) Primary else Color.Transparent))
                 }
             }
         }
 
-        // Confirm Password
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Confirm Password", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
             BasicTextField(
@@ -343,18 +499,20 @@ private fun PasswordSetupCard(
                         Icon(Icons.Outlined.Lock, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Box(modifier = Modifier.weight(1f)) { innerTextField() }
-                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
+                        if (confirmPassword.isNotEmpty() && confirmPassword == openPassword) {
+                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
+                        }
                     }
                 }
             )
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
-                Icon(Icons.Outlined.Done, contentDescription = null, tint = Primary, modifier = Modifier.size(13.dp))
+                val isMatch = confirmPassword.isNotEmpty() && confirmPassword == openPassword
+                Icon(if (isMatch) Icons.Outlined.Done else Icons.Outlined.Close, contentDescription = null, tint = if (isMatch) Primary else OnSurfaceVariant, modifier = Modifier.size(13.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Passwords match", fontSize = 10.sp, color = Primary)
+                Text(if (isMatch) "Passwords match" else "Waiting for match", fontSize = 10.sp, color = if (isMatch) Primary else OnSurfaceVariant)
             }
         }
 
-        // Owner Password Section
         Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(SurfaceContainerLow).clickable { onOwnerToggle() }.padding(12.dp),
@@ -366,7 +524,7 @@ private fun PasswordSetupCard(
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
-                        Text("Permissions Password (Owner)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                        Text("Permissions Password", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
                         Text("Restricts modification rights", fontSize = 11.sp, color = OnSurfaceVariant)
                     }
                 }
@@ -390,7 +548,7 @@ private fun PasswordSetupCard(
                             }
                         }
                     )
-                    Text("Required if recipients need to change these document permissions later.", fontSize = 11.sp, color = OnSurfaceVariant)
+                    Text("Required if recipients need to change permissions later.", fontSize = 11.sp, color = OnSurfaceVariant)
                 }
             }
         }
@@ -431,7 +589,7 @@ private fun PermissionsCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(16.dp)
     ) {
@@ -451,7 +609,7 @@ private fun PermissionsCard(
         Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Verified, contentDescription = null, tint = Primary, modifier = Modifier.size(15.dp))
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Compatible with Adobe Acrobat, Apple Preview, and all standard readers", fontSize = 10.sp, color = OnSurfaceVariant)
+            Text("Compatible with Adobe Acrobat and all readers", fontSize = 10.sp, color = OnSurfaceVariant)
         }
     }
 }
@@ -491,10 +649,23 @@ private fun CustomSwitch(isChecked: Boolean) {
 }
 
 @Composable
-private fun PasswordBottomBar(isProcessing: Boolean, isComplete: Boolean, onClick: () -> Unit) {
-    val buttonColor = if (isProcessing) PrimaryContainer else if (isComplete) SurfaceContainerLowest else PrimaryContainer
+private fun PasswordBottomBar(isProcessing: Boolean, isComplete: Boolean, hasFile: Boolean, onClick: () -> Unit) {
+    val buttonText = when {
+        !hasFile -> "Select a PDF to Protect"
+        isProcessing -> "Encrypting Document..."
+        isComplete -> "PDF Secured!"
+        else -> "Encrypt & Protect PDF"
+    }
 
-    // Morphing Pill animation
+    val buttonIcon = when {
+        !hasFile -> Icons.Outlined.Folder
+        isComplete -> Icons.Filled.CheckCircle
+        else -> Icons.Filled.EnhancedEncryption
+    }
+
+    val buttonColor = if (isComplete) Secondary else if (hasFile) Primary else SurfaceContainerHigh
+    val contentColor = if (hasFile || isComplete) OnPrimary else OutlineVariant
+
     val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 16.dp, label = "buttonShape")
 
     Column(
@@ -502,47 +673,50 @@ private fun PasswordBottomBar(isProcessing: Boolean, isComplete: Boolean, onClic
             .fillMaxWidth()
             .background(SurfaceContainerLowest.copy(alpha = 0.98f))
             .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
-            .navigationBarsPadding() // Blueprint: Anchor bottom spacing for gestures
+            .navigationBarsPadding()
     ) {
+        if (hasFile) {
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Shield, contentDescription = null, tint = Primary, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("AES-256 Bit Encryption", fontSize = 12.sp, color = OnSurfaceVariant)
+                }
+                Text("Offline Key Generation", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Primary)
+            }
+        } else {
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
         Box(
             modifier = Modifier
                 .padding(horizontal = 16.dp)
-                .padding(top = 16.dp, bottom = 12.dp)
+                .padding(bottom = 16.dp)
                 .fillMaxWidth()
-                .height(56.dp) // Blueprint: 56dp robust execution height
-                .shadow(if (!isComplete) 8.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = buttonColor.copy(alpha = 0.35f))
+                .height(56.dp)
+                .shadow(if (!isComplete && hasFile && !isProcessing) 8.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = buttonColor.copy(alpha = 0.35f))
                 .clip(RoundedCornerShape(cornerRadius))
                 .background(buttonColor)
                 .clickable(enabled = !isProcessing && !isComplete) { onClick() },
             contentAlignment = Alignment.Center
         ) {
-            // State Morphing using AnimatedContent for smooth processing crossfades
             AnimatedContent(
                 targetState = Pair(isProcessing, isComplete),
                 label = "buttonContent"
             ) { states ->
-                val (processing, complete) = states
+                val (processing, _) = states
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (processing) {
-                        CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                        CircularProgressIndicator(color = contentColor, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text("Encrypting Document...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
-                    } else if (complete) {
-                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Primary, modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text("PDF Secured!", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Primary)
+                        Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                     } else {
-                        Icon(Icons.Filled.EnhancedEncryption, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(24.dp))
+                        Icon(buttonIcon, contentDescription = null, tint = contentColor, modifier = Modifier.size(24.dp))
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text("Encrypt & Protect PDF", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                        Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                     }
                 }
             }
-        }
-        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Speed, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Estimated completion: ~0.4s on device", fontSize = 11.sp, color = OnSurfaceVariant)
         }
     }
 }
