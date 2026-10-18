@@ -1,7 +1,13 @@
 package com.subha.fileease.ui.screens
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,7 +37,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// Exact color tokens from the Stitch HTML Tailwind config
+// Exact color tokens
 private val Surface = Color(0xFFFAF8FF)
 private val SurfaceContainerLowest = Color(0xFFFFFFFF)
 private val SurfaceContainerLow = Color(0xFFF2F3FF)
@@ -41,7 +47,6 @@ private val OnSurface = Color(0xFF131B2E)
 private val OnSurfaceVariant = Color(0xFF424656)
 private val Primary = Color(0xFF0050CB)
 private val OnPrimary = Color(0xFFFFFFFF)
-private val PrimaryContainer = Color(0xFF0066FF)
 private val PrimaryFixed = Color(0xFFDAE1FF)
 private val OnPrimaryFixed = Color(0xFF001849)
 private val Secondary = Color(0xFF0058BE)
@@ -69,7 +74,7 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
     var processingComplete by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
-    // Mock Data mirroring the HTML design precisely
+    // Mock Data mirroring the design
     val pages = remember {
         mutableStateListOf(
             RotatePage(1, false, 0, "CAD", Icons.Outlined.Architecture, "Rev 3.2", "ISO 9001"),
@@ -125,7 +130,7 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
             RotateBottomBar(isProcessing, processingComplete) {
                 coroutineScope.launch {
                     isProcessing = true
-                    delay(900)
+                    delay(1200) // Simulated processing time
                     isProcessing = false
                     processingComplete = true
                     delay(2200)
@@ -164,8 +169,8 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                     }
                 }
 
-                // File Info Card
-                FileInfoCard()
+                // File Info Card with Active Processing State
+                FileInfoCard(isProcessing = isProcessing)
 
                 // Quick Rotation Action Bar
                 QuickRotationBar(
@@ -208,8 +213,8 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                     }
                 }
 
-                // Status Notification Bar
-                StatusNotificationBar(modifiedCount, unchangedCount = 16 - modifiedCount)
+                // Status Notification Bar with Math Fix
+                StatusNotificationBar(modifiedCount = modifiedCount, unchangedCount = 16 - modifiedCount)
 
                 // Decorative Pro Tip
                 ProTipCard()
@@ -276,7 +281,14 @@ private fun RotateTopBar(onNavigateBack: () -> Unit) {
 }
 
 @Composable
-private fun FileInfoCard() {
+private fun FileInfoCard(isProcessing: Boolean) {
+    // Active Processing Pulse Animation
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val alphaPulse by infiniteTransition.animateFloat(
+        initialValue = 1f, targetValue = if (isProcessing) 0.4f else 1f,
+        animationSpec = infiniteRepeatable(tween(800, easing = FastOutLinearInEasing), RepeatMode.Reverse), label = "alphaPulse"
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -291,7 +303,8 @@ private fun FileInfoCard() {
                 modifier = Modifier
                     .size(44.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(ErrorContainer),
+                    .background(ErrorContainer)
+                    .alpha(alphaPulse), // Applied pulse
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(24.dp))
@@ -310,7 +323,7 @@ private fun FileInfoCard() {
                     ) {
                         Icon(Icons.Outlined.VerifiedUser, contentDescription = null, tint = Primary, modifier = Modifier.size(12.dp))
                         Spacer(modifier = Modifier.width(2.dp))
-                        Text("Local", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary)
+                        Text(if (isProcessing) "Saving..." else "Local", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary)
                     }
                 }
             }
@@ -319,10 +332,10 @@ private fun FileInfoCard() {
             modifier = Modifier
                 .clip(RoundedCornerShape(8.dp))
                 .background(SurfaceContainerLow)
-                .clickable { }
+                .clickable(enabled = !isProcessing) { }
                 .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
-            Text("Change", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Primary)
+            Text("Change", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = if (isProcessing) OutlineVariant else Primary)
         }
     }
 }
@@ -394,7 +407,10 @@ private fun ScopePill(text: String, isActive: Boolean, onClick: () -> Unit) {
             .clickable { onClick() }
             .padding(horizontal = 14.dp, vertical = 6.dp)
     ) {
-        Text(text, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = textColor)
+        // Morph the text slightly to give feedback
+        AnimatedContent(targetState = text, label = "scopeText") { targetText ->
+            Text(targetText, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = textColor)
+        }
     }
 }
 
@@ -407,7 +423,7 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
     // Smoothly animate the rotation of the thumbnail
     val animatedRotation by animateFloatAsState(
         targetValue = page.rotation.toFloat(),
-        animationSpec = tween(durationMillis = 300)
+        animationSpec = tween(durationMillis = 300), label = "rotationAnim"
     )
 
     Column(
@@ -522,7 +538,20 @@ private fun StatusNotificationBar(modifiedCount: Int, unchangedCount: Int) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Sync, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text("$modifiedCount pages modified • $unchangedCount pages unchanged", fontSize = 13.sp, color = OnSurface)
+
+            // Number Tweening: Animate the numeric counts when scopes/rotations change
+            AnimatedContent(
+                targetState = Pair(modifiedCount, unchangedCount),
+                transitionSpec = {
+                    if (targetState.first > initialState.first) {
+                        (slideInVertically { height -> height } + fadeIn()).togetherWith(slideOutVertically { height -> -height } + fadeOut())
+                    } else {
+                        (slideInVertically { height -> -height } + fadeIn()).togetherWith(slideOutVertically { height -> height } + fadeOut())
+                    }.using(SizeTransform(clip = false))
+                }, label = "statusCounts"
+            ) { counts ->
+                Text("${counts.first} pages modified • ${counts.second} pages unchanged", fontSize = 13.sp, color = OnSurface)
+            }
         }
         Row(
             modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(SurfaceContainerLowest).padding(horizontal = 8.dp, vertical = 4.dp),
@@ -574,6 +603,9 @@ private fun RotateBottomBar(isProcessing: Boolean, isComplete: Boolean, onApplyC
 
     val buttonColor = if (isComplete) Secondary else Primary
 
+    // State Morphing: Animate the corner radius for the transition to a loading pill
+    val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 12.dp, label = "buttonShape")
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -594,20 +626,27 @@ private fun RotateBottomBar(isProcessing: Boolean, isComplete: Boolean, onApplyC
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp)
-                .shadow(8.dp, RoundedCornerShape(12.dp), spotColor = buttonColor.copy(alpha = 0.35f))
-                .clip(RoundedCornerShape(12.dp))
+                .shadow(if (!isProcessing && !isComplete) 8.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = buttonColor.copy(alpha = 0.35f))
+                .clip(RoundedCornerShape(cornerRadius))
                 .background(buttonColor)
                 .clickable(enabled = !isProcessing && !isComplete) { onApplyClick() },
             contentAlignment = Alignment.Center
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (isProcessing) {
-                    CircularProgressIndicator(color = OnPrimary, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            // State Morphing: Smooth crossfade between idle, processing, and complete states
+            AnimatedContent(
+                targetState = Pair(isProcessing, isComplete),
+                label = "buttonContent"
+            ) { states ->
+                val (processing, complete) = states
+                if (processing) {
+                    CircularProgressIndicator(color = OnPrimary, modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                 } else {
-                    Icon(buttonIcon, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(20.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(buttonIcon, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(buttonText, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnPrimary)
+                    }
                 }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(buttonText, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnPrimary)
             }
         }
     }
