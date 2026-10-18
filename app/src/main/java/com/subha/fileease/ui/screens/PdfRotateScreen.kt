@@ -137,7 +137,8 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                     processingComplete = false
                 }
             }
-        }
+        },
+        contentWindowInsets = WindowInsets(0.dp)
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -148,38 +149,20 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                // Screen Intro
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("Rotate PDF", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                        Text("Fix orientation and align document blueprints", fontSize = 13.sp, color = OnSurfaceVariant)
-                    }
-                    Box(
-                        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(PrimaryFixed),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Outlined.RotateRight, contentDescription = null, tint = Primary)
-                    }
-                }
-
                 // File Info Card with Active Processing State
                 FileInfoCard(isProcessing = isProcessing)
 
-                // Quick Rotation Action Bar
+                // Quick Rotation Action Bar (Thumb-Driven Command Center)
                 QuickRotationBar(
                     onRotateCW = { rotateActive(90) },
                     onRotateCCW = { rotateActive(-90) },
                     onRotate180 = { rotateActive(180) }
                 )
 
-                // Scope Selector
+                // Scope Selector Pills
                 ScopeSelectorTabs(
                     activeScope = activeScope,
                     selectedCount = selectedCount,
@@ -189,7 +172,7 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                     }
                 )
 
-                // Interactive Grid
+                // Interactive Grid (0.75f Aspect Ratio Scaling)
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     pages.chunked(2).forEach { rowPages ->
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -205,7 +188,7 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                                     }
                                 )
                             }
-                            // Add spacer if the last row only has 1 item
+                            // Add spacer if the last row only has 1 item to maintain grid proportions
                             if (rowPages.size == 1) {
                                 Spacer(modifier = Modifier.weight(1f))
                             }
@@ -213,13 +196,13 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                     }
                 }
 
-                // Status Notification Bar with Math Fix
+                // Status Notification Bar
                 StatusNotificationBar(modifiedCount = modifiedCount, unchangedCount = 16 - modifiedCount)
 
                 // Decorative Pro Tip
                 ProTipCard()
 
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(112.dp))
             }
         }
     }
@@ -230,120 +213,75 @@ private fun RotateTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.9f))
+            .background(Surface.copy(alpha = 0.95f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .statusBarsPadding(),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .clickable { onNavigateBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Column {
-                Text("Rotate Pdf", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Primary))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Offline Engine Active • 100% On-device", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary, letterSpacing = 0.5.sp)
-                }
-            }
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .clickable { onNavigateBack() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .clickable { },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.Info, contentDescription = "Info", tint = OnSurfaceVariant)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(Primary),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.Person, contentDescription = "User", tint = OnPrimary, modifier = Modifier.size(18.dp))
-            }
-        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Text("Rotate PDF", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
     }
 }
 
 @Composable
 private fun FileInfoCard(isProcessing: Boolean) {
-    // Active Processing Pulse Animation
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val alphaPulse by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = if (isProcessing) 0.4f else 1f,
-        animationSpec = infiniteRepeatable(tween(800, easing = FastOutLinearInEasing), RepeatMode.Reverse), label = "alphaPulse"
-    )
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(12.dp))
-            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
-            .padding(12.dp),
+            .shadow(2.dp, RoundedCornerShape(16.dp))
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
+            .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(ErrorContainer)
-                    .alpha(alphaPulse), // Applied pulse
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(ErrorContainer),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(24.dp))
+                Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(26.dp))
             }
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("Engineering_Schematics.pdf", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Engineering_Schematics.pdf", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(modifier = Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("16 pages", fontSize = 11.sp, color = OnSurfaceVariant)
-                    Text(" • ", fontSize = 11.sp, color = OnSurfaceVariant)
-                    Text("6.4 MB", fontSize = 11.sp, color = OnSurfaceVariant)
+                    Text("16 pages", fontSize = 12.sp, color = OnSurfaceVariant)
+                    Text(" • ", fontSize = 12.sp, color = OnSurfaceVariant)
+                    Text("6.4 MB", fontSize = 12.sp, color = OnSurfaceVariant)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Row(
-                        modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryFixed.copy(alpha = 0.6f)).padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Outlined.VerifiedUser, contentDescription = null, tint = Primary, modifier = Modifier.size(12.dp))
-                        Spacer(modifier = Modifier.width(2.dp))
-                        Text(if (isProcessing) "Saving..." else "Local", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary)
-                    }
                 }
             }
         }
         Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(50))
                 .background(SurfaceContainerLow)
                 .clickable(enabled = !isProcessing) { }
-                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .padding(horizontal = 14.dp, vertical = 8.dp)
         ) {
-            Text("Change", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = if (isProcessing) OutlineVariant else Primary)
+            Text("Change", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (isProcessing) OutlineVariant else Primary)
         }
     }
 }
 
 @Composable
 private fun QuickRotationBar(onRotateCW: () -> Unit, onRotateCCW: () -> Unit, onRotate180: () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("ROTATE DIRECTION", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant, letterSpacing = 0.5.sp, modifier = Modifier.padding(horizontal = 4.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("ROTATE DIRECTION", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = OnSurface, letterSpacing = 0.5.sp, modifier = Modifier.padding(horizontal = 4.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             RotateActionButton(modifier = Modifier.weight(1f), icon = Icons.Outlined.RotateRight, title = "90° Right", subtitle = "Clockwise", onClick = onRotateCW)
             RotateActionButton(modifier = Modifier.weight(1f), icon = Icons.Outlined.RotateLeft, title = "90° Left", subtitle = "Anti Clockwise", onClick = onRotateCCW)
@@ -356,32 +294,31 @@ private fun QuickRotationBar(onRotateCW: () -> Unit, onRotateCCW: () -> Unit, on
 private fun RotateActionButton(modifier: Modifier = Modifier, icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
     Column(
         modifier = modifier
-            .shadow(1.dp, RoundedCornerShape(12.dp))
-            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+            .shadow(1.dp, RoundedCornerShape(16.dp))
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .clickable { onClick() }
-            .padding(12.dp),
+            .padding(vertical = 16.dp, horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(SurfaceContainerHigh),
+            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(SurfaceContainerHigh),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, contentDescription = null, tint = Primary, modifier = Modifier.size(22.dp))
+            Icon(icon, contentDescription = null, tint = Primary, modifier = Modifier.size(24.dp))
         }
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, textAlign = TextAlign.Center)
-        Text(subtitle, fontSize = 10.sp, color = OnSurfaceVariant, textAlign = TextAlign.Center)
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = OnSurface, textAlign = TextAlign.Center)
+        Text(subtitle, fontSize = 11.sp, color = OnSurfaceVariant, textAlign = TextAlign.Center)
     }
 }
 
 @Composable
 private fun ScopeSelectorTabs(activeScope: String, selectedCount: Int, onScopeSelect: (String) -> Unit, onResetAll: () -> Unit) {
-    Column {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("APPLY SCOPE", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant, letterSpacing = 0.5.sp)
-            Text("Reset All to 0°", fontSize = 10.sp, color = Primary, modifier = Modifier.clickable { onResetAll() })
+            Text("APPLY SCOPE", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = OnSurface, letterSpacing = 0.5.sp)
+            Text("Reset All to 0°", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Primary, modifier = Modifier.clickable { onResetAll() }.padding(4.dp))
         }
-        Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -398,19 +335,16 @@ private fun ScopeSelectorTabs(activeScope: String, selectedCount: Int, onScopeSe
 private fun ScopePill(text: String, isActive: Boolean, onClick: () -> Unit) {
     val bgColor = if (isActive) Primary else SurfaceContainerLowest
     val textColor = if (isActive) OnPrimary else OnSurfaceVariant
-    val elevation = if (isActive) 2.dp else 1.dp
+    val elevation = if (isActive) 4.dp else 1.dp
 
     Box(
         modifier = Modifier
             .shadow(elevation, RoundedCornerShape(50))
             .background(bgColor, RoundedCornerShape(50))
             .clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        // Morph the text slightly to give feedback
-        AnimatedContent(targetState = text, label = "scopeText") { targetText ->
-            Text(targetText, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = textColor)
-        }
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = textColor)
     }
 }
 
@@ -420,76 +354,68 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
     val badgeBg = if (page.rotation == 0) SurfaceContainerHigh else Primary
     val badgeText = if (page.rotation == 0) OnSurfaceVariant else OnPrimary
 
-    // Smoothly animate the rotation of the thumbnail
-    val animatedRotation by animateFloatAsState(
-        targetValue = page.rotation.toFloat(),
-        animationSpec = tween(durationMillis = 300), label = "rotationAnim"
-    )
-
     Column(
         modifier = modifier
-            .shadow(1.dp, RoundedCornerShape(12.dp))
-            .border(2.dp, borderColor, RoundedCornerShape(12.dp))
-            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+            .shadow(1.dp, RoundedCornerShape(16.dp))
+            .border(2.dp, borderColor, RoundedCornerShape(16.dp))
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .clickable { onSelectToggle() }
             .padding(12.dp)
     ) {
         // Top Label & Rotation Badge
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Page ${page.id}", fontSize = 11.sp, fontWeight = if(page.isSelected) FontWeight.SemiBold else FontWeight.Medium, color = if(page.isSelected) Primary else OnSurfaceVariant)
+            Text("Page ${page.id}", fontSize = 12.sp, fontWeight = if(page.isSelected) FontWeight.Bold else FontWeight.SemiBold, color = if(page.isSelected) Primary else OnSurfaceVariant)
             Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(badgeBg).padding(horizontal = 8.dp, vertical = 2.dp)) {
                 val sign = if (page.rotation > 0 && page.rotation < 180) "+" else ""
-                Text("$sign${page.rotation}°", fontSize = 10.sp, fontWeight = if(page.rotation != 0) FontWeight.Bold else FontWeight.Normal, color = badgeText)
+                Text("$sign${page.rotation}°", fontSize = 11.sp, fontWeight = if(page.rotation != 0) FontWeight.Bold else FontWeight.Medium, color = badgeText)
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        // Thumbnail Container
+        // Thumbnail Container - Enforces the 0.75f aspect ratio
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(0.75f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(SurfaceContainerLow)
-                .padding(10.dp)
+                .padding(12.dp)
         ) {
-            // The actual rotating content
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .rotate(animatedRotation), // Dynamic Animation
+                    .rotate(page.rotation.toFloat()), // Static in Phase 1
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(20.dp).clip(RoundedCornerShape(4.dp)).background(if(page.isSelected) PrimaryFixed else SurfaceVariant), contentAlignment = Alignment.Center) {
-                        Text(page.label, fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Primary)
+                    Box(modifier = Modifier.size(24.dp).clip(RoundedCornerShape(6.dp)).background(if(page.isSelected) PrimaryFixed else SurfaceVariant), contentAlignment = Alignment.Center) {
+                        Text(page.label, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Primary)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    Box(modifier = Modifier.height(4.dp).width(32.dp).clip(RoundedCornerShape(50)).background(OutlineVariant.copy(alpha = 0.6f)))
+                    Box(modifier = Modifier.height(4.dp).width(36.dp).clip(RoundedCornerShape(50)).background(OutlineVariant.copy(alpha = 0.6f)))
                 }
 
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Box(modifier = Modifier.height(4.dp).fillMaxWidth().clip(RoundedCornerShape(50)).background(OutlineVariant.copy(alpha = 0.4f)))
-                    Box(modifier = Modifier.height(4.dp).fillMaxWidth(0.8f).clip(RoundedCornerShape(50)).background(OutlineVariant.copy(alpha = 0.4f)))
-                    Box(modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(4.dp)).background(SurfaceContainer), contentAlignment = Alignment.Center) {
-                        Icon(page.icon, contentDescription = null, tint = Primary.copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(modifier = Modifier.height(6.dp).fillMaxWidth().clip(RoundedCornerShape(50)).background(OutlineVariant.copy(alpha = 0.4f)))
+                    Box(modifier = Modifier.height(6.dp).fillMaxWidth(0.8f).clip(RoundedCornerShape(50)).background(OutlineVariant.copy(alpha = 0.4f)))
+                    Box(modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(6.dp)).background(SurfaceContainer), contentAlignment = Alignment.Center) {
+                        Icon(page.icon, contentDescription = null, tint = Primary.copy(alpha = 0.8f), modifier = Modifier.size(24.dp))
                     }
                 }
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(page.desc1, fontSize = 8.sp, color = OnSurfaceVariant)
-                    Text(page.desc2, fontSize = 8.sp, color = OnSurfaceVariant)
+                    Text(page.desc1, fontSize = 9.sp, color = OnSurfaceVariant)
+                    Text(page.desc2, fontSize = 9.sp, color = OnSurfaceVariant)
                 }
             }
 
-            // Selection Checkmark Overlay
             if (page.isSelected) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .offset(x = 4.dp, y = (-4).dp)
-                        .size(24.dp)
+                        .offset(x = 6.dp, y = (-6).dp)
+                        .size(26.dp)
                         .shadow(2.dp, CircleShape)
                         .clip(CircleShape)
                         .background(Primary),
@@ -500,7 +426,7 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         // Bottom Controls
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -509,16 +435,16 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
                 180 -> "Inverted"
                 else -> "Portrait"
             }
-            Text(orientationText, fontSize = 10.sp, fontWeight = if(page.isSelected) FontWeight.Medium else FontWeight.Normal, color = if(page.isSelected) Primary else OnSurfaceVariant)
+            Text(orientationText, fontSize = 11.sp, fontWeight = if(page.isSelected) FontWeight.SemiBold else FontWeight.Medium, color = if(page.isSelected) Primary else OnSurfaceVariant)
             Box(
                 modifier = Modifier
-                    .size(28.dp)
+                    .size(32.dp)
                     .clip(CircleShape)
                     .background(if(page.isSelected) PrimaryFixed else SurfaceContainerLow)
                     .clickable { onRotateSingle() },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Outlined.RotateRight, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
+                Icon(Icons.Outlined.RotateRight, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
             }
         }
     }
@@ -529,37 +455,24 @@ private fun StatusNotificationBar(modifiedCount: Int, unchangedCount: Int) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(SurfaceContainerLow)
-            .padding(12.dp),
+            .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Sync, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Number Tweening: Animate the numeric counts when scopes/rotations change
-            AnimatedContent(
-                targetState = Pair(modifiedCount, unchangedCount),
-                transitionSpec = {
-                    if (targetState.first > initialState.first) {
-                        (slideInVertically { height -> height } + fadeIn()).togetherWith(slideOutVertically { height -> -height } + fadeOut())
-                    } else {
-                        (slideInVertically { height -> -height } + fadeIn()).togetherWith(slideOutVertically { height -> height } + fadeOut())
-                    }.using(SizeTransform(clip = false))
-                }, label = "statusCounts"
-            ) { counts ->
-                Text("${counts.first} pages modified • ${counts.second} pages unchanged", fontSize = 13.sp, color = OnSurface)
-            }
+            Icon(Icons.Outlined.Sync, contentDescription = null, tint = Primary, modifier = Modifier.size(22.dp))
+            Spacer(modifier = Modifier.width(10.dp))
+            Text("$modifiedCount pages modified • $unchangedCount pages unchanged", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = OnSurface)
         }
         Row(
-            modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(SurfaceContainerLowest).padding(horizontal = 8.dp, vertical = 4.dp),
+            modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLowest).padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Outlined.Bolt, contentDescription = null, tint = Primary, modifier = Modifier.size(14.dp))
+            Icon(Icons.Outlined.Bolt, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(4.dp))
-            Text("Lossless", fontSize = 10.sp, color = Primary)
+            Text("Lossless", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Primary)
         }
     }
 }
@@ -569,84 +482,64 @@ private fun ProTipCard() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(Brush.horizontalGradient(listOf(PrimaryFixed, SurfaceVariant)))
-            .padding(12.dp),
+            .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            modifier = Modifier.size(36.dp).clip(CircleShape).background(SurfaceContainerLowest).shadow(1.dp, CircleShape),
+            modifier = Modifier.size(40.dp).clip(CircleShape).background(SurfaceContainerLowest).shadow(1.dp, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Outlined.Lightbulb, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
+            Icon(Icons.Outlined.Lightbulb, contentDescription = null, tint = Primary, modifier = Modifier.size(22.dp))
         }
-        Spacer(modifier = Modifier.width(12.dp))
+        Spacer(modifier = Modifier.width(16.dp))
         Column {
-            Text("Pro Tip: Multi-Page Select", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnPrimaryFixed)
-            Text("Tap pages directly or use Odd/Even scope pills to rotate bulk plans instantly.", fontSize = 12.sp, color = OnTertiaryFixedVariant, lineHeight = 16.sp)
+            Text("Pro Tip: Multi-Page Select", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryFixed)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text("Tap pages directly or use Odd/Even scope pills to rotate bulk plans instantly.", fontSize = 13.sp, color = OnTertiaryFixedVariant, lineHeight = 18.sp)
         }
     }
 }
 
 @Composable
 private fun RotateBottomBar(isProcessing: Boolean, isComplete: Boolean, onApplyClick: () -> Unit) {
-    val buttonText = when {
-        isProcessing -> "Rebuilding Blueprint PDF..."
-        isComplete -> "Saved to Documents"
-        else -> "Apply & Save Rotated PDF"
-    }
-
-    val buttonIcon = when {
-        isComplete -> Icons.Outlined.CheckCircle
-        else -> Icons.Outlined.SaveAs
-    }
-
+    val buttonText = if (isComplete) "Saved to Documents" else "Apply & Save Rotated PDF"
+    val buttonIcon = if (isComplete) Icons.Outlined.CheckCircle else Icons.Outlined.SaveAs
     val buttonColor = if (isComplete) Secondary else Primary
-
-    // State Morphing: Animate the corner radius for the transition to a loading pill
-    val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 12.dp, label = "buttonShape")
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.95f))
-            .shadow(elevation = 16.dp, spotColor = OnSurface.copy(alpha = 0.06f))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .background(SurfaceContainerLowest.copy(alpha = 0.98f))
+            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
+            .navigationBarsPadding()
     ) {
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp).padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Primary))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Ready to export 16-page PDF", fontSize = 10.sp, color = OnSurfaceVariant)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Ready to export 16-page PDF", fontSize = 12.sp, color = OnSurfaceVariant)
             }
-            Text("Original Quality Retained", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+            Text("Original Quality Retained", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Primary)
         }
 
         Box(
             modifier = Modifier
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 16.dp)
                 .fillMaxWidth()
-                .height(48.dp)
-                .shadow(if (!isProcessing && !isComplete) 8.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = buttonColor.copy(alpha = 0.35f))
-                .clip(RoundedCornerShape(cornerRadius))
+                .height(56.dp)
+                .shadow(if (!isComplete) 12.dp else 0.dp, RoundedCornerShape(16.dp), spotColor = buttonColor.copy(alpha = 0.4f))
+                .clip(RoundedCornerShape(16.dp))
                 .background(buttonColor)
-                .clickable(enabled = !isProcessing && !isComplete) { onApplyClick() },
+                .clickable { onApplyClick() },
             contentAlignment = Alignment.Center
         ) {
-            // State Morphing: Smooth crossfade between idle, processing, and complete states
-            AnimatedContent(
-                targetState = Pair(isProcessing, isComplete),
-                label = "buttonContent"
-            ) { states ->
-                val (processing, complete) = states
-                if (processing) {
-                    CircularProgressIndicator(color = OnPrimary, modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                } else {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(buttonIcon, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(buttonText, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnPrimary)
-                    }
-                }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(buttonIcon, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(24.dp))
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
             }
         }
     }
