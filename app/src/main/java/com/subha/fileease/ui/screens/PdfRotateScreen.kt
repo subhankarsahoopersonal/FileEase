@@ -1,5 +1,9 @@
 package com.subha.fileease.ui.screens
 
+import android.content.Context
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.*
@@ -29,6 +33,9 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,6 +76,10 @@ data class RotatePage(
 
 @Composable
 fun PdfRotateScreen(onNavigateBack: () -> Unit) {
+    val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
+    val vibrator = remember { context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator }
+
     var activeScope by remember { mutableStateOf("selected") }
     var isProcessing by remember { mutableStateOf(false) }
     var processingComplete by remember { mutableStateOf(false) }
@@ -91,6 +102,8 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
 
     // Helper functions for state modification
     val updateScope = { scope: String ->
+        // Tactile Feedback: Kinetic Manipulation
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         activeScope = scope
         if (scope in listOf("all", "odd", "even")) {
             pages.forEachIndexed { index, page ->
@@ -106,6 +119,8 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
     }
 
     val rotateActive = { degrees: Int ->
+        // Tactile Feedback: Kinetic Manipulation
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         pages.forEachIndexed { index, page ->
             val num = index + 1
             val shouldRotate = when (activeScope) {
@@ -128,11 +143,25 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
         topBar = { RotateTopBar(onNavigateBack) },
         bottomBar = {
             RotateBottomBar(isProcessing, processingComplete) {
+                // Tactile Feedback: Execution Anchor
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+
                 coroutineScope.launch {
                     isProcessing = true
                     delay(1200) // Simulated processing time
                     isProcessing = false
                     processingComplete = true
+
+                    // Tactile Feedback: Completion Waveform
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        val timings = longArrayOf(0, 80, 100, 120) // Delay, Vibrate, Pause, Vibrate
+                        val amplitudes = intArrayOf(0, 150, 0, 255) // 0, Medium, 0, Strong
+                        vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                    } else {
+                        @Suppress("DEPRECATION")
+                        vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                    }
+
                     delay(2200)
                     processingComplete = false
                 }
@@ -168,6 +197,7 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                     selectedCount = selectedCount,
                     onScopeSelect = updateScope,
                     onResetAll = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         pages.forEach { it.rotation = 0 }
                     }
                 )
@@ -180,8 +210,12 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                                 PageRotateTile(
                                     page = page,
                                     modifier = Modifier.weight(1f),
-                                    onSelectToggle = { page.isSelected = !page.isSelected },
+                                    onSelectToggle = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        page.isSelected = !page.isSelected
+                                    },
                                     onRotateSingle = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         var newRot = (page.rotation + 90) % 360
                                         if (newRot < 0) newRot += 360
                                         page.rotation = newRot
@@ -385,7 +419,7 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .rotate(page.rotation.toFloat()), // Static in Phase 1
+                    .rotate(page.rotation.toFloat()), // Static in Phase 1 and 2
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
