@@ -1,14 +1,29 @@
 package com.subha.fileease.ui.screens
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.pdf.PdfRenderer
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,19 +39,25 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // Exact color tokens from the Stitch HTML Tailwind config
 private val Surface = Color(0xFFFAF8FF)
@@ -57,32 +78,98 @@ private val OnErrorContainer = Color(0xFF93000A)
 private val Outline = Color(0xFF727687)
 private val OutlineVariant = Color(0xFFC2C6D8)
 
-data class ExtractPage(val id: Int, var isSelected: Boolean)
+// Upgraded Data class for actual PDF Thumbnails
+data class ExtractPage(
+    val id: Int,
+    var isSelected: Boolean,
+    val thumbnail: Bitmap? = null
+)
 
 @Composable
 fun PdfExtractScreen(onNavigateBack: () -> Unit) {
+    val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
 
+    // Hardware & File State Management
+    var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
+    var fileName by remember { mutableStateOf("") }
+    var fileSizeMb by remember { mutableDoubleStateOf(0.0) }
+    var filePages by remember { mutableIntStateOf(0) }
+    val hasFile = selectedFileUri != null
+
     // State Management for inputs and toggles
     var isProcessing by remember { mutableStateOf(false) }
+    var isParsing by remember { mutableStateOf(false) }
     var processingComplete by remember { mutableStateOf(false) }
     var extractionMode by remember { mutableStateOf("single") } // single, separate
     var deleteOriginal by remember { mutableStateOf(false) }
 
-    // Page Grid State
-    val pages = remember {
-        mutableStateListOf(
-            ExtractPage(1, false), ExtractPage(2, true), ExtractPage(3, true),
-            ExtractPage(4, false), ExtractPage(5, true), ExtractPage(6, false)
-        )
-    }
-
-    // Dynamic Derived States
+    // Dynamic Grid State
+    val pages = remember { mutableStateListOf<ExtractPage>() }
     val selectedCount = pages.count { it.isSelected }
     var rangeInput by remember { mutableStateOf(generateRangeString(pages)) }
 
-    // Update input box whenever selection changes
+    // Phase 3: Document Picker & Thumbnail Extractor
+    val pdfPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            selectedFileUri = it
+            isParsing = true
+            coroutineScope.launch(Dispatchers.IO) {
+                var name = "Unknown.pdf"
+                var sizeBytes = 0L
+
+                context.contentResolver.query(it, null, null, null, null)?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (cursor.moveToFirst()) {
+                        name = cursor.getString(nameIndex) ?: "Unknown.pdf"
+                        sizeBytes = cursor.getLong(sizeIndex)
+                    }
+                }
+
+                val generatedPages = mutableListOf<ExtractPage>()
+                var totalPages = 0
+                try {
+                    context.contentResolver.openFileDescriptor(it, "r")?.use { fd ->
+                        val renderer = PdfRenderer(fd)
+                        totalPages = renderer.pageCount
+
+                        // Limit rendering to 50 pages to prevent OOM errors on massive books
+                        val renderLimit = minOf(totalPages, 50)
+                        for (i in 0 until renderLimit) {
+                            val page = renderer.openPage(i)
+                            val bitmap = Bitmap.createBitmap(240, 320, Bitmap.Config.ARGB_8888)
+                            val canvas = Canvas(bitmap)
+                            canvas.drawColor(android.graphics.Color.WHITE)
+                            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+
+                            generatedPages.add(ExtractPage(id = i + 1, isSelected = false, thumbnail = bitmap))
+                            page.close()
+                        }
+
+                        // Fill remainder with empty thumbnails if PDF > 50 pages
+                        for (i in renderLimit until totalPages) {
+                            generatedPages.add(ExtractPage(id = i + 1, isSelected = false, thumbnail = null))
+                        }
+                        renderer.close()
+                    }
+                } catch (e: Exception) { e.printStackTrace() }
+
+                withContext(Dispatchers.Main) {
+                    fileName = name
+                    fileSizeMb = Math.round((sizeBytes / (1024.0 * 1024.0)) * 10.0) / 10.0
+                    filePages = totalPages
+                    pages.clear()
+                    pages.addAll(generatedPages)
+                    isParsing = false
+                }
+            }
+        }
+    }
+
     LaunchedEffect(selectedCount) {
         rangeInput = generateRangeString(pages)
     }
@@ -99,15 +186,19 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
         containerColor = Surface,
         topBar = { ExtractTopBar(onNavigateBack) },
         bottomBar = {
-            ExtractBottomBar(selectedCount, isProcessing, processingComplete) {
-                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                coroutineScope.launch {
-                    isProcessing = true
-                    delay(1200)
-                    isProcessing = false
-                    processingComplete = true
-                    delay(2000)
-                    processingComplete = false
+            ExtractBottomBar(selectedCount, isProcessing, processingComplete, hasFile) {
+                if (hasFile) {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    coroutineScope.launch {
+                        isProcessing = true
+                        delay(1200) // Simulated processing time
+                        isProcessing = false
+                        processingComplete = true
+                        delay(2000)
+                        processingComplete = false
+                    }
+                } else {
+                    pdfPickerLauncher.launch(arrayOf("application/pdf"))
                 }
             }
         },
@@ -125,84 +216,89 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-
-                // File Overview Card
-                SourceDocumentStatusCard()
-
-                // Selection Controls & Syntax Card
-                SelectionControlsCard(
-                    rangeInput = rangeInput,
-                    onRangeChange = { rangeInput = it },
-                    selectedCount = selectedCount,
-                    onApplyText = handleApplyRange,
-                    onSelectAll = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = true) }
-                    },
-                    onSelectNone = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = false) }
-                    },
-                    onSelectInvert = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = !p.isSelected) }
-                    }
+                SourceDocumentStatusCard(
+                    hasFile = hasFile,
+                    fileName = fileName,
+                    fileSizeMb = fileSizeMb,
+                    filePages = filePages,
+                    isParsing = isParsing,
+                    onChangeClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) }
                 )
 
-                // Visual Page Grid
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("DOCUMENT PAGES (SAMPLE 1-6)", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant, letterSpacing = 0.5.sp)
-                        Text("Tap card to toggle", fontSize = 10.sp, color = Outline)
-                    }
+                if (hasFile && !isParsing) {
+                    SelectionControlsCard(
+                        rangeInput = rangeInput,
+                        onRangeChange = { rangeInput = it },
+                        selectedCount = selectedCount,
+                        onApplyText = handleApplyRange,
+                        onSelectAll = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = true) }
+                        },
+                        onSelectNone = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = false) }
+                        },
+                        onSelectInvert = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = !p.isSelected) }
+                        }
+                    )
 
-                    // Chunked grid to prevent nested scroll crashes
-                    pages.chunked(3).forEach { rowPages ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            rowPages.forEach { page ->
-                                ExtractPageTile(
-                                    page = page,
-                                    modifier = Modifier.weight(1f),
-                                    onSelectToggle = {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        val idx = pages.indexOfFirst { it.id == page.id }
-                                        if (idx != -1) pages[idx] = page.copy(isSelected = !page.isSelected)
-                                    }
-                                )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("DOCUMENT PAGES", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant, letterSpacing = 0.5.sp)
+                            Text("Tap card to toggle", fontSize = 10.sp, color = Outline)
+                        }
+
+                        val visiblePages = pages.take(50) // Render cap
+                        visiblePages.chunked(3).forEach { rowPages ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                rowPages.forEach { page ->
+                                    ExtractPageTile(
+                                        page = page,
+                                        modifier = Modifier.weight(1f),
+                                        onSelectToggle = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            val idx = pages.indexOfFirst { it.id == page.id }
+                                            if (idx != -1) pages[idx] = page.copy(isSelected = !page.isSelected)
+                                        }
+                                    )
+                                }
+                                if (rowPages.size < 3) {
+                                    repeat(3 - rowPages.size) { Spacer(modifier = Modifier.weight(1f)) }
+                                }
                             }
-                            if (rowPages.size < 3) {
-                                repeat(3 - rowPages.size) { Spacer(modifier = Modifier.weight(1f)) }
+                        }
+
+                        if (filePages > 50) {
+                            val hiddenCount = filePages - 50
+                            Box(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
+                                Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainer).padding(horizontal = 12.dp, vertical = 6.dp)) {
+                                    Text("+ $hiddenCount additional pages hidden to save memory", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = OnSurfaceVariant)
+                                }
                             }
                         }
                     }
 
-                    Box(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
-                        Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainer).padding(horizontal = 12.dp, vertical = 6.dp)) {
-                            Text("+ 42 additional pages hidden for fast rendering", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = OnSurfaceVariant)
+                    ExtractionModeCard(
+                        extractionMode = extractionMode,
+                        onModeChange = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            extractionMode = it
                         }
-                    }
+                    )
+
+                    AdvancedSettingsCard(
+                        deleteOriginal = deleteOriginal,
+                        onToggle = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            deleteOriginal = !deleteOriginal
+                        }
+                    )
+
+                    SpeedBenefitCard()
                 }
-
-                // Extraction Mode Radios
-                ExtractionModeCard(
-                    extractionMode = extractionMode,
-                    onModeChange = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        extractionMode = it
-                    }
-                )
-
-                // Advanced Settings (Delete Source)
-                AdvancedSettingsCard(
-                    deleteOriginal = deleteOriginal,
-                    onToggle = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        deleteOriginal = !deleteOriginal
-                    }
-                )
-
-                // Lightning Speed Banner
-                SpeedBenefitCard()
 
                 Spacer(modifier = Modifier.height(112.dp))
             }
@@ -224,7 +320,9 @@ private fun parseRangeString(input: String): Set<Int> {
         if (part.contains("-")) {
             val rangeParts = part.split("-").mapNotNull { it.toIntOrNull() }
             if (rangeParts.size == 2) {
-                for (i in rangeParts[0]..rangeParts[1]) wanted.add(i)
+                val start = minOf(rangeParts[0], rangeParts[1])
+                val end = maxOf(rangeParts[0], rangeParts[1])
+                for (i in start..end) wanted.add(i)
             }
         } else {
             part.toIntOrNull()?.let { wanted.add(it) }
@@ -255,70 +353,81 @@ private fun ExtractTopBar(onNavigateBack: () -> Unit) {
             }
             Spacer(modifier = Modifier.width(4.dp))
             Column {
-                Text("Extract Pages", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Primary))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Offline Engine Active • 100% On-device", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary, letterSpacing = 0.5.sp)
-                }
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(44.dp).clip(CircleShape).clickable { }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Info, contentDescription = "Info", tint = OnSurfaceVariant)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(Primary), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Person, contentDescription = "User", tint = OnPrimary, modifier = Modifier.size(18.dp))
+                Text("Extract Pages", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = OnSurface)
             }
         }
     }
 }
 
 @Composable
-private fun SourceDocumentStatusCard() {
+private fun SourceDocumentStatusCard(hasFile: Boolean, fileName: String, fileSizeMb: Double, filePages: Int, isParsing: Boolean, onChangeClick: () -> Unit) {
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val alphaPulse by infiniteTransition.animateFloat(
+        initialValue = 1f, targetValue = if (isParsing) 0.4f else 1f,
+        animationSpec = infiniteRepeatable(tween(800, easing = FastOutLinearInEasing), RepeatMode.Reverse), label = "alphaPulse"
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
+            .clickable(enabled = !hasFile && !isParsing) { onChangeClick() }
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(ErrorContainer.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(26.dp))
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (hasFile) ErrorContainer.copy(alpha = 0.6f) else SurfaceContainerLow)
+                    .alpha(alphaPulse),
+                contentAlignment = Alignment.Center
+            ) {
+                if (hasFile) {
+                    Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(26.dp))
+                } else {
+                    Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = Primary, modifier = Modifier.size(26.dp))
+                }
             }
             Spacer(modifier = Modifier.width(14.dp))
             Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Legal_Discovery_Bundle.pdf", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerHigh).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                        Text("v2.1", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                if (hasFile) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(fileName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        Spacer(modifier = Modifier.width(6.dp))
                     }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
-                    Text("48 pages", fontSize = 12.sp, color = OnSurfaceVariant)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("24.5 MB", fontSize = 12.sp, color = OnSurfaceVariant)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Indexed", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Secondary)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                        Text("$filePages pages", fontSize = 12.sp, color = OnSurfaceVariant)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("$fileSizeMb MB", fontSize = 12.sp, color = OnSurfaceVariant)
+                        if (isParsing) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Indexing...", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                        }
+                    }
+                } else {
+                    Text("No file selected", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text("Tap to browse storage", fontSize = 12.sp, color = OnSurfaceVariant)
                 }
             }
         }
-        Row(
-            modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLow).clickable { }.padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(SurfaceContainerLow)
+                .clickable(enabled = !isParsing) { onChangeClick() }
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Outlined.SwapHoriz, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Change", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Primary)
+            Text(if (hasFile) "Change" else "Select", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (isParsing) OutlineVariant else Primary)
         }
     }
 }
@@ -351,7 +460,6 @@ private fun SelectionControlsCard(
             }
         }
 
-        // Syntax input bar
         BasicTextField(
             value = rangeInput, onValueChange = onRangeChange,
             textStyle = TextStyle(fontSize = 13.sp, color = OnSurface),
@@ -409,26 +517,33 @@ private fun ExtractPageTile(page: ExtractPage, modifier: Modifier = Modifier, on
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier.fillMaxWidth().aspectRatio(0.75f).clip(RoundedCornerShape(10.dp)).background(thumbBg).padding(10.dp)
+            modifier = Modifier.fillMaxWidth().aspectRatio(0.75f).clip(RoundedCornerShape(10.dp)).background(thumbBg)
         ) {
-            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("P.${page.id}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = pColor)
-                    Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(checkBg).shadow(if(page.isSelected) 2.dp else 0.dp), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Outlined.Check, contentDescription = null, tint = checkTint, modifier = Modifier.size(14.dp))
+            if (page.thumbnail != null) {
+                Image(
+                    bitmap = page.thumbnail.asImageBitmap(),
+                    contentDescription = "Page ${page.id}",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().alpha(if (page.isSelected) 1f else 0.8f)
+                )
+            } else {
+                // Fallback for missing/hidden thumbnails
+                Column(modifier = Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Box(modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(6.dp)).background(SurfaceContainer), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Outlined.Article, contentDescription = null, tint = Primary.copy(alpha = 0.5f), modifier = Modifier.size(24.dp))
                     }
+                    Spacer(modifier = Modifier.height(10.dp))
                 }
+            }
 
-                // Mock Lines
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Box(modifier = Modifier.height(6.dp).fillMaxWidth(0.8f).clip(RoundedCornerShape(50)).background(pColor.copy(alpha = 0.4f)))
-                    Box(modifier = Modifier.height(4.dp).fillMaxWidth().clip(RoundedCornerShape(50)).background(if(page.isSelected) Primary.copy(alpha = 0.3f) else OutlineVariant.copy(alpha = 0.25f)))
-                    Box(modifier = Modifier.height(4.dp).fillMaxWidth(0.8f).clip(RoundedCornerShape(50)).background(if(page.isSelected) Primary.copy(alpha = 0.25f) else OutlineVariant.copy(alpha = 0.25f)))
+            // Check Overlay
+            Row(modifier = Modifier.fillMaxWidth().padding(6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(SurfaceContainerLowest.copy(alpha = 0.9f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
+                    Text("P.${page.id}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = pColor)
                 }
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.height(4.dp).width(24.dp).clip(RoundedCornerShape(50)).background(pColor.copy(alpha = 0.4f)))
-                    Text("Cover", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = pColor)
+                Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(checkBg).border(1.dp, if(page.isSelected) Color.Transparent else OutlineVariant, CircleShape).shadow(if(page.isSelected) 2.dp else 0.dp), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.Check, contentDescription = null, tint = checkTint, modifier = Modifier.size(14.dp))
                 }
             }
         }
@@ -452,7 +567,6 @@ private fun ExtractionModeCard(extractionMode: String, onModeChange: (String) ->
             Icon(Icons.Outlined.Tune, contentDescription = null, tint = Outline, modifier = Modifier.size(20.dp))
         }
 
-        // Radio 1: Combined
         Row(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if(extractionMode == "single") SurfaceContainerLow else Color.Transparent).clickable { onModeChange("single") }.padding(12.dp),
             verticalAlignment = Alignment.Top
@@ -471,7 +585,6 @@ private fun ExtractionModeCard(extractionMode: String, onModeChange: (String) ->
             }
         }
 
-        // Radio 2: Separate
         Row(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if(extractionMode == "separate") SurfaceContainerLow else Color.Transparent).clickable { onModeChange("separate") }.padding(12.dp),
             verticalAlignment = Alignment.Top
@@ -544,49 +657,54 @@ private fun SpeedBenefitCard() {
 }
 
 @Composable
-private fun ExtractBottomBar(selectedCount: Int, isProcessing: Boolean, isComplete: Boolean, onClick: () -> Unit) {
+private fun ExtractBottomBar(selectedCount: Int, isProcessing: Boolean, isComplete: Boolean, hasFile: Boolean, onClick: () -> Unit) {
     val estSize = "%.1f".format(selectedCount * 0.47)
     val buttonText = when {
+        !hasFile -> "Select a PDF to Extract"
         isProcessing -> "Generating PDF..."
         isComplete -> "Saved to Downloads"
         selectedCount == 0 -> "Select Pages to Extract"
         else -> "Extract $selectedCount ${if(selectedCount==1)"Page" else "Pages"}"
     }
     val buttonIcon = when {
+        !hasFile -> Icons.Outlined.Folder
         isProcessing -> Icons.Outlined.Refresh
         isComplete -> Icons.Outlined.CheckCircle
         else -> Icons.Outlined.Download
     }
-    val buttonColor = if (isComplete) Secondary else PrimaryContainer
+    val buttonColor = if (isComplete) Secondary else if (hasFile) PrimaryContainer else SurfaceContainerHigh
+    val contentColor = if (hasFile || isComplete) OnPrimaryContainer else OutlineVariant
     val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 16.dp, label = "buttonShape")
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.98f))
+            .background(Surface.copy(alpha = 0.98f))
             .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
             .navigationBarsPadding()
     ) {
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(PrimaryContainer))
-                Spacer(modifier = Modifier.width(6.dp))
-
-                // Blueprint: Odometer Tweening for the selected count
-                AnimatedContent(
-                    targetState = selectedCount,
-                    transitionSpec = {
-                        if (targetState > initialState) {
-                            (slideInVertically { height -> height } + fadeIn()).togetherWith(slideOutVertically { height -> -height } + fadeOut())
-                        } else {
-                            (slideInVertically { height -> -height } + fadeIn()).togetherWith(slideOutVertically { height -> height } + fadeOut())
-                        }.using(SizeTransform(clip = false))
-                    }, label = "countAnim"
-                ) { count ->
-                    Text("$count pages selected", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+        if (hasFile) {
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(PrimaryContainer))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    AnimatedContent(
+                        targetState = selectedCount,
+                        transitionSpec = {
+                            if (targetState > initialState) {
+                                (slideInVertically { height -> height } + fadeIn()).togetherWith(slideOutVertically { height -> -height } + fadeOut())
+                            } else {
+                                (slideInVertically { height -> -height } + fadeIn()).togetherWith(slideOutVertically { height -> height } + fadeOut())
+                            }.using(SizeTransform(clip = false))
+                        }, label = "countAnim"
+                    ) { count ->
+                        Text("$count pages selected", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                    }
                 }
+                Text(if(selectedCount>0) "~$estSize MB estimated" else "0 MB", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant)
             }
-            Text(if(selectedCount>0) "~$estSize MB estimated" else "0 MB", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant)
+        } else {
+            Spacer(modifier = Modifier.height(16.dp))
         }
 
         Box(
@@ -595,13 +713,12 @@ private fun ExtractBottomBar(selectedCount: Int, isProcessing: Boolean, isComple
                 .padding(bottom = 16.dp)
                 .fillMaxWidth()
                 .height(56.dp)
-                .shadow(if (!isComplete && selectedCount > 0 && !isProcessing) 8.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.35f))
+                .shadow(if (!isComplete && selectedCount > 0 && !isProcessing && hasFile) 8.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.35f))
                 .clip(RoundedCornerShape(cornerRadius))
-                .background(if(selectedCount==0) buttonColor.copy(alpha = 0.5f) else buttonColor)
-                .clickable(enabled = selectedCount > 0 && !isProcessing && !isComplete) { onClick() },
+                .background(if(selectedCount==0 && hasFile) buttonColor.copy(alpha = 0.5f) else buttonColor)
+                .clickable(enabled = (!hasFile) || (selectedCount > 0 && !isProcessing && !isComplete)) { onClick() },
             contentAlignment = Alignment.Center
         ) {
-            // Blueprint: Morphing button crossfade
             AnimatedContent(
                 targetState = Pair(isProcessing, isComplete),
                 label = "buttonContent"
@@ -609,14 +726,12 @@ private fun ExtractBottomBar(selectedCount: Int, isProcessing: Boolean, isComple
                 val (processing, _) = states
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (processing) {
-                        CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                        CircularProgressIndicator(color = contentColor, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
                     } else {
-                        Icon(buttonIcon, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                        Icon(buttonIcon, contentDescription = null, tint = contentColor, modifier = Modifier.size(24.dp))
                     }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                 }
             }
         }
