@@ -82,7 +82,7 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
     val handleApplyRange = {
         val selectedIds = parseRangeString(rangeInput)
         pages.forEachIndexed { index, page ->
-            page.isSelected = selectedIds.contains(page.id)
+            pages[index] = page.copy(isSelected = selectedIds.contains(page.id))
         }
     }
 
@@ -90,6 +90,7 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
         containerColor = Surface,
         topBar = { ExtractTopBar(onNavigateBack) },
         bottomBar = {
+            // Blueprint: The Command Anchor outside the scrollable area
             ExtractBottomBar(selectedCount, isProcessing, processingComplete) {
                 coroutineScope.launch {
                     isProcessing = true
@@ -100,7 +101,8 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                     processingComplete = false
                 }
             }
-        }
+        },
+        contentWindowInsets = WindowInsets(0.dp) // Blueprint: Immersive Bleed foundation
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -111,8 +113,8 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp) // Enhanced spacing for depth
             ) {
 
                 // File Overview Card
@@ -124,9 +126,9 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                     onRangeChange = { rangeInput = it },
                     selectedCount = selectedCount,
                     onApplyText = handleApplyRange,
-                    onSelectAll = { pages.forEach { it.isSelected = true } },
-                    onSelectNone = { pages.forEach { it.isSelected = false } },
-                    onSelectInvert = { pages.forEach { it.isSelected = !it.isSelected } }
+                    onSelectAll = { pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = true) } },
+                    onSelectNone = { pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = false) } },
+                    onSelectInvert = { pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = !p.isSelected) } }
                 )
 
                 // Visual Page Grid
@@ -143,16 +145,22 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                                 ExtractPageTile(
                                     page = page,
                                     modifier = Modifier.weight(1f),
-                                    onSelectToggle = { page.isSelected = !page.isSelected }
+                                    onSelectToggle = {
+                                        val idx = pages.indexOfFirst { it.id == page.id }
+                                        if (idx != -1) pages[idx] = page.copy(isSelected = !page.isSelected)
+                                    }
                                 )
                             }
-                            repeat(3 - rowPages.size) { Spacer(modifier = Modifier.weight(1f)) }
+                            // Fixed: Safely fill remainder of the row to avoid layout stretching
+                            if (rowPages.size < 3) {
+                                repeat(3 - rowPages.size) { Spacer(modifier = Modifier.weight(1f)) }
+                            }
                         }
                     }
 
-                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainer).padding(horizontal = 12.dp, vertical = 4.dp)) {
-                            Text("+ 42 additional pages hidden for fast rendering", fontSize = 10.sp, color = OnSurfaceVariant)
+                    Box(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
+                        Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainer).padding(horizontal = 12.dp, vertical = 6.dp)) {
+                            Text("+ 42 additional pages hidden for fast rendering", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = OnSurfaceVariant)
                         }
                     }
                 }
@@ -166,7 +174,8 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                 // Lightning Speed Banner
                 SpeedBenefitCard()
 
-                Spacer(modifier = Modifier.height(32.dp))
+                // Extra padding to ensure scrolling clears the floating bottom anchor
+                Spacer(modifier = Modifier.height(112.dp))
             }
         }
     }
@@ -201,8 +210,9 @@ private fun ExtractTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.9f))
+            .background(Surface.copy(alpha = 0.95f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
+            .statusBarsPadding() // Blueprint: Immersive Bleed
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -241,17 +251,17 @@ private fun SourceDocumentStatusCard() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(12.dp))
-            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)).background(ErrorContainer.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(24.dp))
+            Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(ErrorContainer.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(26.dp))
             }
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(14.dp))
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Legal_Discovery_Bundle.pdf", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -260,7 +270,7 @@ private fun SourceDocumentStatusCard() {
                         Text("v2.1", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
                     }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                     Text("48 pages", fontSize = 12.sp, color = OnSurfaceVariant)
                     Spacer(modifier = Modifier.width(8.dp))
                     Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
@@ -269,17 +279,17 @@ private fun SourceDocumentStatusCard() {
                     Spacer(modifier = Modifier.width(8.dp))
                     Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Indexed", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Secondary)
+                    Text("Indexed", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Secondary)
                 }
             }
         }
         Row(
-            modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLow).clickable { }.padding(horizontal = 12.dp, vertical = 6.dp),
+            modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLow).clickable { }.padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(Icons.Outlined.SwapHoriz, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(4.dp))
-            Text("Change", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+            Text("Change", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Primary)
         }
     }
 }
@@ -292,20 +302,20 @@ private fun SelectionControlsCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(12.dp))
-            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Page Selection", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                Spacer(modifier = Modifier.width(6.dp))
-                Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryContainer).padding(horizontal = 8.dp, vertical = 2.dp)) {
-                    Text("$selectedCount active", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = OnPrimaryContainer)
+                Text("Page Selection", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryContainer).padding(horizontal = 10.dp, vertical = 4.dp)) {
+                    Text("$selectedCount active", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 QuickActionBtn("All", onSelectAll)
                 QuickActionBtn("None", onSelectNone)
                 QuickActionBtn("Invert", onSelectInvert)
@@ -315,23 +325,23 @@ private fun SelectionControlsCard(
         // Syntax input bar
         BasicTextField(
             value = rangeInput, onValueChange = onRangeChange,
-            textStyle = TextStyle(fontSize = 12.sp, color = OnSurface),
+            textStyle = TextStyle(fontSize = 13.sp, color = OnSurface),
             decorationBox = { innerTextField ->
                 Row(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).padding(4.dp),
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(SurfaceContainerLow).padding(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Spacer(modifier = Modifier.width(8.dp))
-                    Icon(Icons.Outlined.Keyboard, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(Icons.Outlined.Keyboard, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Box(modifier = Modifier.weight(1f)) {
-                        if (rangeInput.isEmpty()) Text("e.g. 2, 3, 5, 12-16", fontSize = 12.sp, color = Outline)
+                        if (rangeInput.isEmpty()) Text("e.g. 2, 3, 5, 12-16", fontSize = 13.sp, color = Outline)
                         innerTextField()
                     }
                     Box(
-                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(PrimaryContainer).clickable { onApplyText() }.padding(horizontal = 16.dp, vertical = 6.dp)
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(PrimaryContainer).clickable { onApplyText() }.padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
-                        Text("Apply", fontSize = 11.sp, color = OnPrimary)
+                        Text("Apply", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
                     }
                 }
             }
@@ -342,15 +352,15 @@ private fun SelectionControlsCard(
 @Composable
 private fun QuickActionBtn(title: String, onClick: () -> Unit) {
     Box(
-        modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLow).clickable { onClick() }.padding(horizontal = 10.dp, vertical = 4.dp)
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLow).clickable { onClick() }.padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
-        Text(title, fontSize = 11.sp, color = OnSurfaceVariant)
+        Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant)
     }
 }
 
 @Composable
 private fun ExtractPageTile(page: ExtractPage, modifier: Modifier = Modifier, onSelectToggle: () -> Unit) {
-    val borderColor = if (page.isSelected) PrimaryContainer.copy(alpha = 0.18f) else Color.Black.copy(alpha = 0.04f)
+    val borderColor = if (page.isSelected) PrimaryContainer.copy(alpha = 0.25f) else Color.Black.copy(alpha = 0.04f)
     val elevation = if (page.isSelected) 4.dp else 1.dp
     val thumbBg = if (page.isSelected) SurfaceContainerHigh.copy(alpha = 0.6f) else SurfaceContainerLow
 
@@ -359,23 +369,23 @@ private fun ExtractPageTile(page: ExtractPage, modifier: Modifier = Modifier, on
     val checkTint = if (page.isSelected) OnPrimary else Color.Transparent
 
     val labelColor = if (page.isSelected) Primary else OnSurface
-    val labelWeight = if (page.isSelected) FontWeight.SemiBold else FontWeight.Medium
+    val labelWeight = if (page.isSelected) FontWeight.Bold else FontWeight.Medium
 
     Column(
         modifier = modifier
-            .shadow(elevation, RoundedCornerShape(12.dp), spotColor = borderColor)
-            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+            .shadow(elevation, RoundedCornerShape(16.dp), spotColor = borderColor) // Blueprint: Z-Axis Depth
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .clickable { onSelectToggle() }
-            .padding(8.dp),
+            .padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier.fillMaxWidth().aspectRatio(0.75f).clip(RoundedCornerShape(8.dp)).background(thumbBg).padding(10.dp)
+            modifier = Modifier.fillMaxWidth().aspectRatio(0.75f).clip(RoundedCornerShape(10.dp)).background(thumbBg).padding(10.dp)
         ) {
             Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("P.${page.id}", fontSize = 9.sp, fontWeight = FontWeight.SemiBold, color = pColor)
-                    Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(checkBg).shadow(if(page.isSelected) 1.dp else 0.dp), contentAlignment = Alignment.Center) {
+                    Text("P.${page.id}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = pColor)
+                    Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(checkBg).shadow(if(page.isSelected) 2.dp else 0.dp), contentAlignment = Alignment.Center) {
                         Icon(Icons.Outlined.Check, contentDescription = null, tint = checkTint, modifier = Modifier.size(14.dp))
                     }
                 }
@@ -389,12 +399,12 @@ private fun ExtractPageTile(page: ExtractPage, modifier: Modifier = Modifier, on
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.height(4.dp).width(24.dp).clip(RoundedCornerShape(50)).background(pColor.copy(alpha = 0.4f)))
-                    Text("Cover", fontSize = 8.sp, fontWeight = FontWeight.SemiBold, color = pColor)
+                    Text("Cover", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = pColor)
                 }
             }
         }
-        Spacer(modifier = Modifier.height(6.dp))
-        Text("Page ${page.id}", fontSize = 11.sp, fontWeight = labelWeight, color = labelColor)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text("Page ${page.id}", fontSize = 12.sp, fontWeight = labelWeight, color = labelColor)
     }
 }
 
@@ -403,13 +413,13 @@ private fun ExtractionModeCard(extractionMode: String, onModeChange: (String) ->
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(12.dp))
-            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Extraction Mode", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+            Text("Extraction Mode", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
             Icon(Icons.Outlined.Tune, contentDescription = null, tint = Outline, modifier = Modifier.size(20.dp))
         }
 
@@ -425,10 +435,10 @@ private fun ExtractionModeCard(extractionMode: String, onModeChange: (String) ->
                     Text("Single Combined PDF", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
                     Spacer(modifier = Modifier.width(8.dp))
                     Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryContainer).padding(horizontal = 8.dp, vertical = 2.dp)) {
-                        Text("Recommended", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = OnPrimaryContainer)
+                        Text("Recommended", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
                     }
                 }
-                Text("Merges the extracted sequence into one unified, ready-to-share document.", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+                Text("Merges the extracted sequence into one unified, ready-to-share document.", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
             }
         }
 
@@ -441,7 +451,7 @@ private fun ExtractionModeCard(extractionMode: String, onModeChange: (String) ->
             Spacer(modifier = Modifier.width(12.dp))
             Column {
                 Text("Separate Pages (ZIP Archive)", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                Text("Produces individual PDF files per page packaged into a lightweight ZIP.", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+                Text("Produces individual PDF files per page packaged into a lightweight ZIP.", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
             }
         }
     }
@@ -452,24 +462,25 @@ private fun AdvancedSettingsCard(deleteOriginal: Boolean, onToggle: () -> Unit) 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(12.dp))
-            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .clickable { onToggle() }
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerHigh), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.AutoDelete, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
+            Box(modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(SurfaceContainerHigh), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.AutoDelete, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
             }
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(14.dp))
             Column {
                 Text("Delete pages from source", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                Spacer(modifier = Modifier.height(2.dp))
                 Text("Non-destructive duplicate created in Trash", fontSize = 12.sp, color = OnSurfaceVariant)
             }
         }
-        val offset by animateFloatAsState(targetValue = if (deleteOriginal) 20f else 0f)
+        val offset by animateFloatAsState(targetValue = if (deleteOriginal) 20f else 0f, label = "switch")
         val bgColor = if (deleteOriginal) PrimaryContainer else SurfaceContainerHigh
         Box(modifier = Modifier.width(44.dp).height(24.dp).clip(RoundedCornerShape(50)).background(bgColor).padding(2.dp)) {
             Box(modifier = Modifier.size(20.dp).offset(x = offset.dp).clip(CircleShape).background(SurfaceContainerLowest).shadow(1.dp, CircleShape))
@@ -482,23 +493,24 @@ private fun SpeedBenefitCard() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(12.dp, RoundedCornerShape(12.dp), spotColor = PrimaryContainer.copy(alpha = 0.25f))
-            .background(Brush.linearGradient(listOf(PrimaryContainer, Secondary)), RoundedCornerShape(12.dp))
+            .shadow(12.dp, RoundedCornerShape(16.dp), spotColor = PrimaryContainer.copy(alpha = 0.25f))
+            .background(Brush.linearGradient(listOf(PrimaryContainer, Secondary)), RoundedCornerShape(16.dp))
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Bolt, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+            Box(modifier = Modifier.size(44.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Bolt, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
             }
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(14.dp))
             Column {
-                Text("Zero Cloud Upload", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                Text("Processed instantly in device WebAssembly sandbox.", fontSize = 12.sp, color = Color.White.copy(alpha = 0.8f))
+                Text("Zero Cloud Upload", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Spacer(modifier = Modifier.height(2.dp))
+                Text("Processed instantly in device WebAssembly sandbox.", fontSize = 13.sp, color = Color.White.copy(alpha = 0.8f))
             }
         }
-        Text("0.3s", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Text("0.3s", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.White)
     }
 }
 
@@ -521,37 +533,39 @@ private fun ExtractBottomBar(selectedCount: Int, isProcessing: Boolean, isComple
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.95f))
-            .shadow(elevation = 16.dp, spotColor = OnSurface.copy(alpha = 0.06f))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .background(SurfaceContainerLowest.copy(alpha = 0.98f))
+            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
+            .navigationBarsPadding() // Blueprint: Anchor bottom spacing for gestures
     ) {
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp).padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(PrimaryContainer))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("$selectedCount pages selected", fontSize = 13.sp, color = OnSurface)
+                Text("$selectedCount pages selected", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
             }
-            Text(if(selectedCount>0) "~$estSize MB estimated" else "0 MB", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = OnSurfaceVariant)
+            Text(if(selectedCount>0) "~$estSize MB estimated" else "0 MB", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant)
         }
 
         Box(
             modifier = Modifier
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 16.dp)
                 .fillMaxWidth()
-                .height(48.dp)
-                .shadow(8.dp, RoundedCornerShape(12.dp), spotColor = PrimaryContainer.copy(alpha = 0.35f))
-                .clip(RoundedCornerShape(12.dp))
+                .height(56.dp) // Blueprint: 56dp robust execution height
+                .shadow(if (!isComplete && selectedCount > 0) 8.dp else 0.dp, RoundedCornerShape(16.dp), spotColor = PrimaryContainer.copy(alpha = 0.35f))
+                .clip(RoundedCornerShape(16.dp))
                 .background(if(selectedCount==0) buttonColor.copy(alpha = 0.5f) else buttonColor)
                 .clickable(enabled = selectedCount > 0 && !isProcessing && !isComplete) { onClick() },
             contentAlignment = Alignment.Center
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isProcessing) {
-                    CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
                 } else {
-                    Icon(buttonIcon, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(20.dp))
+                    Icon(buttonIcon, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(24.dp))
                 }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(buttonText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnPrimaryContainer)
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
             }
         }
     }
