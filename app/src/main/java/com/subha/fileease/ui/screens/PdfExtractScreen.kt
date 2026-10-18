@@ -540,14 +540,17 @@ private fun SelectionControlsCard(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Page Selection", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryContainer).padding(horizontal = 10.dp, vertical = 4.dp)) {
-                    Text("Active", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+            // Added weight(1f) so this side yields horizontal space to the buttons if needed
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Text("Selection", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(modifier = Modifier.width(6.dp))
+                Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryContainer).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                    Text("Active", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Spacer(modifier = Modifier.width(8.dp))
+            // Tightened the spacing between the action buttons
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 QuickActionBtn("All", onSelectAll)
                 QuickActionBtn("None", onSelectNone)
                 QuickActionBtn("Invert", onSelectInvert)
@@ -583,9 +586,14 @@ private fun SelectionControlsCard(
 @Composable
 private fun QuickActionBtn(title: String, onClick: () -> Unit) {
     Box(
-        modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLow).clickable { onClick() }.padding(horizontal = 12.dp, vertical = 6.dp)
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(SurfaceContainerLow)
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 6.dp) // Tightened horizontal padding
     ) {
-        Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant)
+        // Enforced softWrap = false to completely prevent the text from breaking into two lines
+        Text(title, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant, maxLines = 1, softWrap = false)
     }
 }
 
