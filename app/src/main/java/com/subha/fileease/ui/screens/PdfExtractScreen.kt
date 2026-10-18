@@ -1,13 +1,18 @@
 package com.subha.fileease.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,12 +28,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.draw.alpha
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -55,8 +61,10 @@ data class ExtractPage(val id: Int, var isSelected: Boolean)
 
 @Composable
 fun PdfExtractScreen(onNavigateBack: () -> Unit) {
-    // State Management for inputs and toggles
+    val haptics = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
+
+    // State Management for inputs and toggles
     var isProcessing by remember { mutableStateOf(false) }
     var processingComplete by remember { mutableStateOf(false) }
     var extractionMode by remember { mutableStateOf("single") } // single, separate
@@ -80,6 +88,7 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
     }
 
     val handleApplyRange = {
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         val selectedIds = parseRangeString(rangeInput)
         pages.forEachIndexed { index, page ->
             pages[index] = page.copy(isSelected = selectedIds.contains(page.id))
@@ -90,8 +99,8 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
         containerColor = Surface,
         topBar = { ExtractTopBar(onNavigateBack) },
         bottomBar = {
-            // Blueprint: The Command Anchor outside the scrollable area
             ExtractBottomBar(selectedCount, isProcessing, processingComplete) {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 coroutineScope.launch {
                     isProcessing = true
                     delay(1200)
@@ -102,7 +111,7 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                 }
             }
         },
-        contentWindowInsets = WindowInsets(0.dp) // Blueprint: Immersive Bleed foundation
+        contentWindowInsets = WindowInsets(0.dp)
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -114,7 +123,7 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp) // Enhanced spacing for depth
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
 
                 // File Overview Card
@@ -126,9 +135,18 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                     onRangeChange = { rangeInput = it },
                     selectedCount = selectedCount,
                     onApplyText = handleApplyRange,
-                    onSelectAll = { pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = true) } },
-                    onSelectNone = { pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = false) } },
-                    onSelectInvert = { pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = !p.isSelected) } }
+                    onSelectAll = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = true) }
+                    },
+                    onSelectNone = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = false) }
+                    },
+                    onSelectInvert = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        pages.forEachIndexed { i, p -> pages[i] = p.copy(isSelected = !p.isSelected) }
+                    }
                 )
 
                 // Visual Page Grid
@@ -146,12 +164,12 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                                     page = page,
                                     modifier = Modifier.weight(1f),
                                     onSelectToggle = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         val idx = pages.indexOfFirst { it.id == page.id }
                                         if (idx != -1) pages[idx] = page.copy(isSelected = !page.isSelected)
                                     }
                                 )
                             }
-                            // Fixed: Safely fill remainder of the row to avoid layout stretching
                             if (rowPages.size < 3) {
                                 repeat(3 - rowPages.size) { Spacer(modifier = Modifier.weight(1f)) }
                             }
@@ -166,15 +184,26 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                 }
 
                 // Extraction Mode Radios
-                ExtractionModeCard(extractionMode, onModeChange = { extractionMode = it })
+                ExtractionModeCard(
+                    extractionMode = extractionMode,
+                    onModeChange = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        extractionMode = it
+                    }
+                )
 
                 // Advanced Settings (Delete Source)
-                AdvancedSettingsCard(deleteOriginal, onToggle = { deleteOriginal = !deleteOriginal })
+                AdvancedSettingsCard(
+                    deleteOriginal = deleteOriginal,
+                    onToggle = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        deleteOriginal = !deleteOriginal
+                    }
+                )
 
                 // Lightning Speed Banner
                 SpeedBenefitCard()
 
-                // Extra padding to ensure scrolling clears the floating bottom anchor
                 Spacer(modifier = Modifier.height(112.dp))
             }
         }
@@ -212,7 +241,7 @@ private fun ExtractTopBar(onNavigateBack: () -> Unit) {
             .fillMaxWidth()
             .background(Surface.copy(alpha = 0.95f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .statusBarsPadding() // Blueprint: Immersive Bleed
+            .statusBarsPadding()
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -251,7 +280,7 @@ private fun SourceDocumentStatusCard() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -302,7 +331,7 @@ private fun SelectionControlsCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -312,7 +341,7 @@ private fun SelectionControlsCard(
                 Text("Page Selection", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
                 Spacer(modifier = Modifier.width(8.dp))
                 Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryContainer).padding(horizontal = 10.dp, vertical = 4.dp)) {
-                    Text("$selectedCount active", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                    Text("Active", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -373,7 +402,7 @@ private fun ExtractPageTile(page: ExtractPage, modifier: Modifier = Modifier, on
 
     Column(
         modifier = modifier
-            .shadow(elevation, RoundedCornerShape(16.dp), spotColor = borderColor) // Blueprint: Z-Axis Depth
+            .shadow(elevation, RoundedCornerShape(16.dp), spotColor = borderColor)
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .clickable { onSelectToggle() }
             .padding(12.dp),
@@ -413,7 +442,7 @@ private fun ExtractionModeCard(extractionMode: String, onModeChange: (String) ->
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -462,7 +491,7 @@ private fun AdvancedSettingsCard(deleteOriginal: Boolean, onToggle: () -> Unit) 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .clickable { onToggle() }
             .padding(16.dp),
@@ -529,19 +558,33 @@ private fun ExtractBottomBar(selectedCount: Int, isProcessing: Boolean, isComple
         else -> Icons.Outlined.Download
     }
     val buttonColor = if (isComplete) Secondary else PrimaryContainer
+    val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 16.dp, label = "buttonShape")
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(SurfaceContainerLowest.copy(alpha = 0.98f))
             .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
-            .navigationBarsPadding() // Blueprint: Anchor bottom spacing for gestures
+            .navigationBarsPadding()
     ) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(PrimaryContainer))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("$selectedCount pages selected", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+
+                // Blueprint: Odometer Tweening for the selected count
+                AnimatedContent(
+                    targetState = selectedCount,
+                    transitionSpec = {
+                        if (targetState > initialState) {
+                            (slideInVertically { height -> height } + fadeIn()).togetherWith(slideOutVertically { height -> -height } + fadeOut())
+                        } else {
+                            (slideInVertically { height -> -height } + fadeIn()).togetherWith(slideOutVertically { height -> height } + fadeOut())
+                        }.using(SizeTransform(clip = false))
+                    }, label = "countAnim"
+                ) { count ->
+                    Text("$count pages selected", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                }
             }
             Text(if(selectedCount>0) "~$estSize MB estimated" else "0 MB", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant)
         }
@@ -551,21 +594,30 @@ private fun ExtractBottomBar(selectedCount: Int, isProcessing: Boolean, isComple
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 16.dp)
                 .fillMaxWidth()
-                .height(56.dp) // Blueprint: 56dp robust execution height
-                .shadow(if (!isComplete && selectedCount > 0) 8.dp else 0.dp, RoundedCornerShape(16.dp), spotColor = PrimaryContainer.copy(alpha = 0.35f))
-                .clip(RoundedCornerShape(16.dp))
+                .height(56.dp)
+                .shadow(if (!isComplete && selectedCount > 0 && !isProcessing) 8.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.35f))
+                .clip(RoundedCornerShape(cornerRadius))
                 .background(if(selectedCount==0) buttonColor.copy(alpha = 0.5f) else buttonColor)
                 .clickable(enabled = selectedCount > 0 && !isProcessing && !isComplete) { onClick() },
             contentAlignment = Alignment.Center
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (isProcessing) {
-                    CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
-                } else {
-                    Icon(buttonIcon, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(24.dp))
+            // Blueprint: Morphing button crossfade
+            AnimatedContent(
+                targetState = Pair(isProcessing, isComplete),
+                label = "buttonContent"
+            ) { states ->
+                val (processing, _) = states
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (processing) {
+                        CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                    } else {
+                        Icon(buttonIcon, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                    }
                 }
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
             }
         }
     }
