@@ -379,8 +379,7 @@ private fun RotateTopBar(onNavigateBack: () -> Unit) {
             .fillMaxWidth()
             .background(Surface.copy(alpha = 0.95f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-            .statusBarsPadding(),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
