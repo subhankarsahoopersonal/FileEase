@@ -1,6 +1,8 @@
 package com.subha.fileease.ui.screens
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,6 +24,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -51,6 +55,9 @@ private val Outline = Color(0xFF727687)
 
 @Composable
 fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
+    val haptics = LocalHapticFeedback.current
+    val coroutineScope = rememberCoroutineScope()
+
     // State Management for inputs and toggles
     var openPassword by remember { mutableStateOf("Vault#Secure99") }
     var confirmPassword by remember { mutableStateOf("Vault#Secure99") }
@@ -65,7 +72,6 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
 
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
-    val coroutineScope = rememberCoroutineScope()
 
     Scaffold(
         containerColor = Surface,
@@ -73,6 +79,8 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
         bottomBar = {
             // Blueprint: The Command Anchor outside the scrollable area
             PasswordBottomBar(isProcessing, isComplete) {
+                // Tactile Feedback: Heavy Execution Anchor
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 coroutineScope.launch {
                     isProcessing = true
                     delay(700)
@@ -126,18 +134,36 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
                     confirmPassword = confirmPassword,
                     onConfirmPasswordChange = { confirmPassword = it },
                     isVisible = isOpenPasswordVisible,
-                    onVisibilityToggle = { isOpenPasswordVisible = !isOpenPasswordVisible },
+                    onVisibilityToggle = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        isOpenPasswordVisible = !isOpenPasswordVisible
+                    },
                     isOwnerEnabled = isOwnerEnabled,
-                    onOwnerToggle = { isOwnerEnabled = !isOwnerEnabled },
+                    onOwnerToggle = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        isOwnerEnabled = !isOwnerEnabled
+                    },
                     ownerPassword = ownerPassword,
                     onOwnerPasswordChange = { ownerPassword = it }
                 )
 
                 // 4. Granular Permissions Card
                 PermissionsCard(
-                    allowPrinting = allowPrinting, onPrintToggle = { allowPrinting = !allowPrinting },
-                    allowCopying = allowCopying, onCopyToggle = { allowCopying = !allowCopying },
-                    allowAnnotations = allowAnnotations, onAnnotToggle = { allowAnnotations = !allowAnnotations }
+                    allowPrinting = allowPrinting,
+                    onPrintToggle = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        allowPrinting = !allowPrinting
+                    },
+                    allowCopying = allowCopying,
+                    onCopyToggle = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        allowCopying = !allowCopying
+                    },
+                    allowAnnotations = allowAnnotations,
+                    onAnnotToggle = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        allowAnnotations = !allowAnnotations
+                    }
                 )
 
                 // Extra padding to ensure scrolling clears the floating bottom anchor
@@ -468,6 +494,9 @@ private fun CustomSwitch(isChecked: Boolean) {
 private fun PasswordBottomBar(isProcessing: Boolean, isComplete: Boolean, onClick: () -> Unit) {
     val buttonColor = if (isProcessing) PrimaryContainer else if (isComplete) SurfaceContainerLowest else PrimaryContainer
 
+    // Morphing Pill animation
+    val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 16.dp, label = "buttonShape")
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -481,25 +510,32 @@ private fun PasswordBottomBar(isProcessing: Boolean, isComplete: Boolean, onClic
                 .padding(top = 16.dp, bottom = 12.dp)
                 .fillMaxWidth()
                 .height(56.dp) // Blueprint: 56dp robust execution height
-                .shadow(if (!isComplete) 8.dp else 0.dp, RoundedCornerShape(16.dp), spotColor = buttonColor.copy(alpha = 0.35f))
-                .clip(RoundedCornerShape(16.dp))
+                .shadow(if (!isComplete) 8.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = buttonColor.copy(alpha = 0.35f))
+                .clip(RoundedCornerShape(cornerRadius))
                 .background(buttonColor)
                 .clickable(enabled = !isProcessing && !isComplete) { onClick() },
             contentAlignment = Alignment.Center
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (isProcessing) {
-                    CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text("Encrypting Document...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
-                } else if (isComplete) {
-                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Primary, modifier = Modifier.size(24.dp))
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text("PDF Secured!", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Primary)
-                } else {
-                    Icon(Icons.Filled.EnhancedEncryption, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(24.dp))
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text("Encrypt & Protect PDF", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+            // State Morphing using AnimatedContent for smooth processing crossfades
+            AnimatedContent(
+                targetState = Pair(isProcessing, isComplete),
+                label = "buttonContent"
+            ) { states ->
+                val (processing, complete) = states
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (processing) {
+                        CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Encrypting Document...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                    } else if (complete) {
+                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Primary, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("PDF Secured!", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Primary)
+                    } else {
+                        Icon(Icons.Filled.EnhancedEncryption, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Encrypt & Protect PDF", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                    }
                 }
             }
         }
