@@ -1,7 +1,12 @@
 package com.subha.fileease.ui.screens
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,6 +29,8 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -64,8 +71,13 @@ data class QueuedImage(
 
 @Composable
 fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
+    val haptics = LocalHapticFeedback.current
+    val coroutineScope = rememberCoroutineScope()
+
     // State Management
     var fileName by remember { mutableStateOf("Scan_Bundle_2024") }
+    var isProcessing by remember { mutableStateOf(false) }
+    var isComplete by remember { mutableStateOf(false) }
 
     val imageQueue = remember {
         mutableStateListOf(
@@ -88,7 +100,21 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
         bottomBar = {
             ImagesToPdfBottomBar(
                 imageCount = imageQueue.size,
-                onConvert = { /* Handle conversion */ }
+                isProcessing = isProcessing,
+                isComplete = isComplete,
+                onConvert = {
+                    if (imageQueue.isNotEmpty()) {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        coroutineScope.launch {
+                            isProcessing = true
+                            delay(1500) // Simulated build time
+                            isProcessing = false
+                            isComplete = true
+                            delay(2000)
+                            isComplete = false
+                        }
+                    }
+                }
             )
         },
         contentWindowInsets = WindowInsets(0.dp)
@@ -157,7 +183,7 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                             }
                         }
                     }
-                    Box(modifier = Modifier.size(32.dp).clip(CircleShape).clickable { }.padding(4.dp), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.size(32.dp).clip(CircleShape).clickable { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }.padding(4.dp), contentAlignment = Alignment.Center) {
                         Icon(Icons.Outlined.Edit, contentDescription = "Edit", tint = OnSurfaceVariant, modifier = Modifier.size(18.dp))
                     }
                 }
@@ -172,25 +198,38 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                                 Text("${imageQueue.size} files", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = OnPrimaryFixed)
                             }
                         }
-                        Text("Clear All", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Error, modifier = Modifier.clickable { imageQueue.clear() }.padding(4.dp))
+                        Text("Clear All", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Error, modifier = Modifier.clickable {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            imageQueue.clear()
+                        }.padding(4.dp))
                     }
 
-                    if (imageQueue.isEmpty()) {
+                    AnimatedVisibility(
+                        visible = imageQueue.isEmpty(),
+                        enter = fadeIn() + slideInVertically { -it / 2 },
+                        exit = fadeOut()
+                    ) {
                         Box(
                             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(SurfaceContainer).padding(24.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text("Queue is empty. Tap \"+ Add More Images\" below to start.", fontSize = 12.sp, color = OnSurfaceVariant, textAlign = TextAlign.Center)
                         }
-                    } else {
-                        imageQueue.forEachIndexed { index, img ->
-                            QueueItemRow(
-                                item = img,
-                                index = index + 1,
-                                onRotate = { img.rotation = (img.rotation + 90f) % 360f },
-                                onDelete = { imageQueue.remove(img) }
-                            )
-                        }
+                    }
+
+                    imageQueue.forEachIndexed { index, img ->
+                        QueueItemRow(
+                            item = img,
+                            index = index + 1,
+                            onRotate = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                img.rotation = (img.rotation + 90f) % 360f
+                            },
+                            onDelete = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                imageQueue.remove(img)
+                            }
+                        )
                     }
                 }
 
@@ -200,7 +239,7 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
                         .background(SurfaceContainer)
-                        .clickable { /* Handle Add images */ }
+                        .clickable { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
                         .padding(vertical = 14.dp, horizontal = 16.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
@@ -228,7 +267,10 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                         Text("Sheet & Frame", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = OnSurfaceVariant)
                     }
 
-                    SegmentControlRow("PAGE SIZE", listOf("A4", "US Letter", "Fit Image", "Original"), selectedPageSize) { selectedPageSize = it }
+                    SegmentControlRow("PAGE SIZE", listOf("A4", "US Letter", "Fit Image", "Original"), selectedPageSize) {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        selectedPageSize = it
+                    }
 
                     // Orientation with Icons
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -246,7 +288,10 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                                         .weight(1f)
                                         .clip(RoundedCornerShape(6.dp))
                                         .background(if (isSelected) Primary else Color.Transparent)
-                                        .clickable { selectedOrientation = value }
+                                        .clickable {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            selectedOrientation = value
+                                        }
                                         .padding(vertical = 6.dp),
                                     horizontalArrangement = Arrangement.Center,
                                     verticalAlignment = Alignment.CenterVertically
@@ -259,8 +304,14 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                         }
                     }
 
-                    SegmentControlRow("MARGINS", listOf("None (0mm)", "Compact (5mm)", "Std (12mm)"), selectedMargins) { selectedMargins = it }
-                    SegmentControlRow("IMAGE FIT & SCALING", listOf("Fit Entire", "Fill Page", "Center"), selectedFit) { selectedFit = it }
+                    SegmentControlRow("MARGINS", listOf("None (0mm)", "Compact (5mm)", "Std (12mm)"), selectedMargins) {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        selectedMargins = it
+                    }
+                    SegmentControlRow("IMAGE FIT & SCALING", listOf("Fit Entire", "Fill Page", "Center"), selectedFit) {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        selectedFit = it
+                    }
                 }
 
                 // Quality & Compression Card
@@ -286,18 +337,24 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                             modifier = Modifier.weight(1f),
                             dpi = "300 DPI", title = "Print Quality", subtitle = "Lossless detail",
                             isSelected = selectedDpi == 300,
-                            onClick = { selectedDpi = 300 }
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                selectedDpi = 300
+                            }
                         )
                         QualityCard(
                             modifier = Modifier.weight(1f),
                             dpi = "150 DPI", title = "Balanced Web", subtitle = "Fast sharing",
                             isSelected = selectedDpi == 150,
-                            onClick = { selectedDpi = 150 }
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                selectedDpi = 150
+                            }
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(80.dp))
+                Spacer(modifier = Modifier.height(112.dp))
             }
         }
     }
@@ -316,7 +373,6 @@ private fun ImagesToPdfTopBar(onNavigateBack: () -> Unit) {
             .fillMaxWidth()
             .background(Surface.copy(alpha = 0.90f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            // FIX: Removed .statusBarsPadding() to prevent the layout pushing down artificially
             .padding(horizontal = 16.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -454,40 +510,64 @@ private fun QualityCard(modifier: Modifier, dpi: String, title: String, subtitle
 }
 
 @Composable
-private fun ImagesToPdfBottomBar(imageCount: Int, onConvert: () -> Unit) {
+private fun ImagesToPdfBottomBar(imageCount: Int, isProcessing: Boolean, isComplete: Boolean, onConvert: () -> Unit) {
     val estimatedSize = if (imageCount > 0) "~${String.format("%.1f", imageCount * 0.95)} MB" else "0 MB"
+
+    val buttonText = when {
+        isProcessing -> "Generating PDF..."
+        isComplete -> "Saved to Downloads!"
+        imageCount == 0 -> "Add images to proceed"
+        else -> "Convert $imageCount Images to PDF"
+    }
+
+    val buttonIcon = when {
+        isProcessing -> Icons.Outlined.Refresh
+        isComplete -> Icons.Filled.CheckCircle
+        else -> Icons.Outlined.PictureAsPdf
+    }
+
+    val buttonColor = if (isComplete) Secondary else if (imageCount > 0) PrimaryContainer else SurfaceContainerHigh
+    val contentColor = if (imageCount > 0 || isComplete) OnPrimaryContainer else OutlineVariant
+    val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 12.dp, label = "buttonShape")
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Surface.copy(alpha = 0.90f))
-            .shadow(elevation = 16.dp, spotColor = Color.Black.copy(alpha = 0.06f))
+            .background(Surface.copy(alpha = 0.95f))
+            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
             .navigationBarsPadding()
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
-                    .shadow(if (imageCount > 0) 4.dp else 0.dp, RoundedCornerShape(12.dp), spotColor = PrimaryContainer.copy(alpha = 0.5f))
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (imageCount > 0) PrimaryContainer else SurfaceContainerHigh)
-                    .clickable(enabled = imageCount > 0) { onConvert() },
+                    .height(56.dp)
+                    .shadow(if (!isComplete && imageCount > 0 && !isProcessing) 6.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.4f))
+                    .clip(RoundedCornerShape(cornerRadius))
+                    .background(if(imageCount == 0) buttonColor.copy(alpha = 0.5f) else buttonColor)
+                    .clickable(enabled = imageCount > 0 && !isProcessing && !isComplete) { onConvert() },
                 contentAlignment = Alignment.Center
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = if(imageCount>0) OnPrimary else Outline, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        if (imageCount > 0) "Convert $imageCount Images to PDF" else "Add images to proceed",
-                        fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = if(imageCount>0) OnPrimary else Outline
-                    )
+                AnimatedContent(
+                    targetState = Pair(isProcessing, isComplete),
+                    label = "buttonContent"
+                ) { states ->
+                    val (processing, _) = states
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (processing) {
+                            CircularProgressIndicator(color = contentColor, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                        } else {
+                            Icon(buttonIcon, contentDescription = null, tint = contentColor, modifier = Modifier.size(24.dp))
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                    }
                 }
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.SdCard, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(13.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Estimated size: $estimatedSize (Saved ~3.9 MB)", fontSize = 10.sp, color = OnSurfaceVariant)
+                Text("Estimated size: $estimatedSize", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = OnSurfaceVariant)
             }
         }
     }
