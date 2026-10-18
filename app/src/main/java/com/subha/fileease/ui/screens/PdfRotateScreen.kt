@@ -140,25 +140,33 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
         containerColor = Surface,
         topBar = { RotateTopBar(onNavigateBack) },
         bottomBar = {
-            RotateBottomBar(isProcessing, processingComplete) {
-                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                coroutineScope.launch {
-                    isProcessing = true
-                    delay(1200) // Simulated processing time
-                    isProcessing = false
-                    processingComplete = true
+            // Blueprint: Bottom Anchor (The Execution)
+            // Floating Status Notification stacked directly atop the execution bar
+            Column(modifier = Modifier.fillMaxWidth()) {
+                StatusNotificationBar(
+                    modifiedCount = modifiedCount,
+                    unchangedCount = 16 - modifiedCount
+                )
+                RotateBottomBar(isProcessing, processingComplete) {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    coroutineScope.launch {
+                        isProcessing = true
+                        delay(1200) // Simulated processing time
+                        isProcessing = false
+                        processingComplete = true
 
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        val timings = longArrayOf(0, 80, 100, 120)
-                        val amplitudes = intArrayOf(0, 150, 0, 255)
-                        vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
-                    } else {
-                        @Suppress("DEPRECATION")
-                        vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            val timings = longArrayOf(0, 80, 100, 120)
+                            val amplitudes = intArrayOf(0, 150, 0, 255)
+                            vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                        } else {
+                            @Suppress("DEPRECATION")
+                            vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                        }
+
+                        delay(2200)
+                        processingComplete = false
                     }
-
-                    delay(2200)
-                    processingComplete = false
                 }
             }
         },
@@ -176,24 +184,29 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
+                // Blueprint: Center Stage (The Subject)
                 FileInfoCard(isProcessing = isProcessing)
 
-                QuickRotationBar(
-                    onRotateCW = { rotateActive(90) },
-                    onRotateCCW = { rotateActive(-90) },
-                    onRotate180 = { rotateActive(180) }
-                )
+                // Blueprint: Control Deck (The Tools)
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    QuickRotationBar(
+                        onRotateCW = { rotateActive(90) },
+                        onRotateCCW = { rotateActive(-90) },
+                        onRotate180 = { rotateActive(180) }
+                    )
 
-                ScopeSelectorTabs(
-                    activeScope = activeScope,
-                    selectedCount = selectedCount,
-                    onScopeSelect = updateScope,
-                    onResetAll = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        pages.forEach { it.rotation = 0 }
-                    }
-                )
+                    ScopeSelectorTabs(
+                        activeScope = activeScope,
+                        selectedCount = selectedCount,
+                        onScopeSelect = updateScope,
+                        onResetAll = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            pages.forEach { it.rotation = 0 }
+                        }
+                    )
+                }
 
+                // Blueprint: The Canvas (The Workspace)
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     pages.chunked(2).forEach { rowPages ->
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -220,11 +233,10 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                     }
                 }
 
-                StatusNotificationBar(modifiedCount = modifiedCount, unchangedCount = 16 - modifiedCount)
-
                 ProTipCard()
 
-                Spacer(modifier = Modifier.height(112.dp))
+                // Extra padding to ensure scrolling clears the floating bottom anchor
+                Spacer(modifier = Modifier.height(180.dp))
             }
         }
     }
@@ -257,7 +269,6 @@ private fun RotateTopBar(onNavigateBack: () -> Unit) {
 
 @Composable
 private fun FileInfoCard(isProcessing: Boolean) {
-    // Active Processing Pulse Animation
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val alphaPulse by infiniteTransition.animateFloat(
         initialValue = 1f, targetValue = if (isProcessing) 0.4f else 1f,
@@ -267,7 +278,7 @@ private fun FileInfoCard(isProcessing: Boolean) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(2.dp, RoundedCornerShape(16.dp))
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -384,7 +395,6 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
     val badgeBg = if (page.rotation == 0) SurfaceContainerHigh else Primary
     val badgeText = if (page.rotation == 0) OnSurfaceVariant else OnPrimary
 
-    // Smoothly animate the physical rotation of the thumbnail
     val animatedRotation by animateFloatAsState(
         targetValue = page.rotation.toFloat(),
         animationSpec = tween(durationMillis = 300),
@@ -420,7 +430,7 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .rotate(animatedRotation), // Animated physical rotation
+                    .rotate(animatedRotation),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -486,12 +496,16 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
 
 @Composable
 private fun StatusNotificationBar(modifiedCount: Int, unchangedCount: Int) {
+    // Redesigned to act as a floating HUD pill directly above the bottom execution bar
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(SurfaceContainerLow)
-            .padding(16.dp),
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 12.dp)
+            .shadow(6.dp, RoundedCornerShape(16.dp), spotColor = Primary.copy(alpha = 0.15f))
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
+            .border(1.dp, PrimaryFixed, RoundedCornerShape(16.dp))
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -499,7 +513,6 @@ private fun StatusNotificationBar(modifiedCount: Int, unchangedCount: Int) {
             Icon(Icons.Outlined.Sync, contentDescription = null, tint = Primary, modifier = Modifier.size(22.dp))
             Spacer(modifier = Modifier.width(10.dp))
 
-            // Odometer Tweening Animation
             AnimatedContent(
                 targetState = Pair(modifiedCount, unchangedCount),
                 transitionSpec = {
@@ -510,14 +523,14 @@ private fun StatusNotificationBar(modifiedCount: Int, unchangedCount: Int) {
                     }.using(SizeTransform(clip = false))
                 }, label = "statusCounts"
             ) { counts ->
-                Text("${counts.first} pages modified • ${counts.second} pages unchanged", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = OnSurface)
+                Text("${counts.first} modified • ${counts.second} unchanged", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = OnSurface)
             }
         }
         Row(
-            modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLowest).padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(PrimaryFixed.copy(alpha = 0.5f)).padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Outlined.Bolt, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
+            Icon(Icons.Outlined.Bolt, contentDescription = null, tint = Primary, modifier = Modifier.size(14.dp))
             Spacer(modifier = Modifier.width(4.dp))
             Text("Lossless", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Primary)
         }
@@ -555,7 +568,6 @@ private fun RotateBottomBar(isProcessing: Boolean, isComplete: Boolean, onApplyC
     val buttonIcon = if (isComplete) Icons.Outlined.CheckCircle else Icons.Outlined.SaveAs
     val buttonColor = if (isComplete) Secondary else Primary
 
-    // Morphing pill animation based on processing state
     val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 16.dp, label = "buttonShape")
 
     Column(
