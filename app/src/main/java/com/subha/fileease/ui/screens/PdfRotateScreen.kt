@@ -102,7 +102,6 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
 
     // Helper functions for state modification
     val updateScope = { scope: String ->
-        // Tactile Feedback: Kinetic Manipulation
         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         activeScope = scope
         if (scope in listOf("all", "odd", "even")) {
@@ -119,7 +118,6 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
     }
 
     val rotateActive = { degrees: Int ->
-        // Tactile Feedback: Kinetic Manipulation
         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         pages.forEachIndexed { index, page ->
             val num = index + 1
@@ -143,19 +141,16 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
         topBar = { RotateTopBar(onNavigateBack) },
         bottomBar = {
             RotateBottomBar(isProcessing, processingComplete) {
-                // Tactile Feedback: Execution Anchor
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-
                 coroutineScope.launch {
                     isProcessing = true
                     delay(1200) // Simulated processing time
                     isProcessing = false
                     processingComplete = true
 
-                    // Tactile Feedback: Completion Waveform
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        val timings = longArrayOf(0, 80, 100, 120) // Delay, Vibrate, Pause, Vibrate
-                        val amplitudes = intArrayOf(0, 150, 0, 255) // 0, Medium, 0, Strong
+                        val timings = longArrayOf(0, 80, 100, 120)
+                        val amplitudes = intArrayOf(0, 150, 0, 255)
                         vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
                     } else {
                         @Suppress("DEPRECATION")
@@ -181,17 +176,14 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                // File Info Card with Active Processing State
                 FileInfoCard(isProcessing = isProcessing)
 
-                // Quick Rotation Action Bar (Thumb-Driven Command Center)
                 QuickRotationBar(
                     onRotateCW = { rotateActive(90) },
                     onRotateCCW = { rotateActive(-90) },
                     onRotate180 = { rotateActive(180) }
                 )
 
-                // Scope Selector Pills
                 ScopeSelectorTabs(
                     activeScope = activeScope,
                     selectedCount = selectedCount,
@@ -202,7 +194,6 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                     }
                 )
 
-                // Interactive Grid (0.75f Aspect Ratio Scaling)
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     pages.chunked(2).forEach { rowPages ->
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -222,7 +213,6 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                                     }
                                 )
                             }
-                            // Add spacer if the last row only has 1 item to maintain grid proportions
                             if (rowPages.size == 1) {
                                 Spacer(modifier = Modifier.weight(1f))
                             }
@@ -230,10 +220,8 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                     }
                 }
 
-                // Status Notification Bar
                 StatusNotificationBar(modifiedCount = modifiedCount, unchangedCount = 16 - modifiedCount)
 
-                // Decorative Pro Tip
                 ProTipCard()
 
                 Spacer(modifier = Modifier.height(112.dp))
@@ -269,6 +257,13 @@ private fun RotateTopBar(onNavigateBack: () -> Unit) {
 
 @Composable
 private fun FileInfoCard(isProcessing: Boolean) {
+    // Active Processing Pulse Animation
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val alphaPulse by infiniteTransition.animateFloat(
+        initialValue = 1f, targetValue = if (isProcessing) 0.4f else 1f,
+        animationSpec = infiniteRepeatable(tween(800, easing = FastOutLinearInEasing), RepeatMode.Reverse), label = "alphaPulse"
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -283,7 +278,8 @@ private fun FileInfoCard(isProcessing: Boolean) {
                 modifier = Modifier
                     .size(52.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(ErrorContainer),
+                    .background(ErrorContainer)
+                    .alpha(alphaPulse),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnErrorContainer, modifier = Modifier.size(26.dp))
@@ -388,6 +384,13 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
     val badgeBg = if (page.rotation == 0) SurfaceContainerHigh else Primary
     val badgeText = if (page.rotation == 0) OnSurfaceVariant else OnPrimary
 
+    // Smoothly animate the physical rotation of the thumbnail
+    val animatedRotation by animateFloatAsState(
+        targetValue = page.rotation.toFloat(),
+        animationSpec = tween(durationMillis = 300),
+        label = "rotationAnim"
+    )
+
     Column(
         modifier = modifier
             .shadow(1.dp, RoundedCornerShape(16.dp))
@@ -396,7 +399,6 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
             .clickable { onSelectToggle() }
             .padding(12.dp)
     ) {
-        // Top Label & Rotation Badge
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Page ${page.id}", fontSize = 12.sp, fontWeight = if(page.isSelected) FontWeight.Bold else FontWeight.SemiBold, color = if(page.isSelected) Primary else OnSurfaceVariant)
             Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(badgeBg).padding(horizontal = 8.dp, vertical = 2.dp)) {
@@ -407,7 +409,6 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Thumbnail Container - Enforces the 0.75f aspect ratio
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -419,7 +420,7 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .rotate(page.rotation.toFloat()), // Static in Phase 1 and 2
+                    .rotate(animatedRotation), // Animated physical rotation
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -462,7 +463,6 @@ private fun PageRotateTile(page: RotatePage, modifier: Modifier = Modifier, onSe
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Bottom Controls
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             val orientationText = when (page.rotation) {
                 90, 270 -> "Landscape"
@@ -498,7 +498,20 @@ private fun StatusNotificationBar(modifiedCount: Int, unchangedCount: Int) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Sync, contentDescription = null, tint = Primary, modifier = Modifier.size(22.dp))
             Spacer(modifier = Modifier.width(10.dp))
-            Text("$modifiedCount pages modified • $unchangedCount pages unchanged", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = OnSurface)
+
+            // Odometer Tweening Animation
+            AnimatedContent(
+                targetState = Pair(modifiedCount, unchangedCount),
+                transitionSpec = {
+                    if (targetState.first > initialState.first) {
+                        (slideInVertically { height -> height } + fadeIn()).togetherWith(slideOutVertically { height -> -height } + fadeOut())
+                    } else {
+                        (slideInVertically { height -> -height } + fadeIn()).togetherWith(slideOutVertically { height -> height } + fadeOut())
+                    }.using(SizeTransform(clip = false))
+                }, label = "statusCounts"
+            ) { counts ->
+                Text("${counts.first} pages modified • ${counts.second} pages unchanged", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = OnSurface)
+            }
         }
         Row(
             modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLowest).padding(horizontal = 10.dp, vertical = 6.dp),
@@ -542,6 +555,9 @@ private fun RotateBottomBar(isProcessing: Boolean, isComplete: Boolean, onApplyC
     val buttonIcon = if (isComplete) Icons.Outlined.CheckCircle else Icons.Outlined.SaveAs
     val buttonColor = if (isComplete) Secondary else Primary
 
+    // Morphing pill animation based on processing state
+    val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 16.dp, label = "buttonShape")
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -564,16 +580,26 @@ private fun RotateBottomBar(isProcessing: Boolean, isComplete: Boolean, onApplyC
                 .padding(bottom = 16.dp)
                 .fillMaxWidth()
                 .height(56.dp)
-                .shadow(if (!isComplete) 12.dp else 0.dp, RoundedCornerShape(16.dp), spotColor = buttonColor.copy(alpha = 0.4f))
-                .clip(RoundedCornerShape(16.dp))
+                .shadow(if (!isComplete && !isProcessing) 12.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = buttonColor.copy(alpha = 0.4f))
+                .clip(RoundedCornerShape(cornerRadius))
                 .background(buttonColor)
-                .clickable { onApplyClick() },
+                .clickable(enabled = !isProcessing && !isComplete) { onApplyClick() },
             contentAlignment = Alignment.Center
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(buttonIcon, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(24.dp))
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
+            AnimatedContent(
+                targetState = Pair(isProcessing, isComplete),
+                label = "buttonContent"
+            ) { states ->
+                val (processing, _) = states
+                if (processing) {
+                    CircularProgressIndicator(color = OnPrimary, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(buttonIcon, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimary)
+                    }
+                }
             }
         }
     }
