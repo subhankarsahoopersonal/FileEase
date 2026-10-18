@@ -250,8 +250,6 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
                 )
 
                 if (hasFile) {
-                    SecurityBadgeBanner()
-
                     PasswordSetupCard(
                         openPassword = openPassword,
                         onOpenPasswordChange = { openPassword = it },
@@ -371,31 +369,6 @@ private fun FileOverviewCard(hasFile: Boolean, fileName: String, fileSizeMb: Dou
                 .padding(horizontal = 14.dp, vertical = 8.dp)
         ) {
             Text(if (hasFile) "Change" else "Select", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Primary)
-        }
-    }
-}
-
-@Composable
-private fun SecurityBadgeBanner() {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(SurfaceContainer)
-            .padding(16.dp),
-        verticalAlignment = Alignment.Top
-    ) {
-        Box(
-            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(SurfaceContainerLowest).shadow(2.dp, RoundedCornerShape(10.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Filled.EnhancedEncryption, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        Column {
-            Text("100% On-Device Offline Encryption", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-            Spacer(modifier = Modifier.height(2.dp))
-            Text("Zero cloud transmission. Cryptographic keys never leave this phone's secure hardware module.", fontSize = 12.sp, color = OnSurfaceVariant, lineHeight = 16.sp)
         }
     }
 }
