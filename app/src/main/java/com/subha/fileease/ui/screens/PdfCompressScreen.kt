@@ -239,21 +239,25 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                                         }
                                     }
 
-                                    // Apply Refinements: Phase 2 Deep Structural Stripping
+                                    // Apply Refinements
                                     if (stripThumbnails) {
-                                        // 1. Strip top-level metadata (XML bloat)
+                                        // 1. Safely clear string metadata WITHOUT nullifying the parent object reference
+                                        document.documentInformation?.let { info ->
+                                            info.author = null
+                                            info.creator = null
+                                            info.keywords = null
+                                            info.producer = null
+                                            info.subject = null
+                                            info.title = null
+                                        }
+
+                                        // 2. Remove the XML metadata stream
                                         document.documentCatalog.metadata = null
-                                        document.documentInformation = null
 
-                                        // 2. Strip document-level outlines/bookmarks (Navigation bloat)
-                                        document.documentCatalog.documentOutline = null
-
-                                        // 3. Deep Page-Level Thumbnail Stripping (The heavy lifter)
+                                        // 3. Deep Page-Level Thumbnail & Extra Data Stripping
                                         for (page in document.pages) {
-                                            // Access the low-level PDF dictionary and physically delete the embedded raster thumbnail
                                             page.cosObject.removeItem(com.tom_roush.pdfbox.cos.COSName.THUMB)
-
-                                            // Strip page-level metadata if attached
+                                            page.cosObject.removeItem(com.tom_roush.pdfbox.cos.COSName.PIECE_INFO)
                                             page.cosObject.removeItem(com.tom_roush.pdfbox.cos.COSName.METADATA)
                                         }
                                     }
