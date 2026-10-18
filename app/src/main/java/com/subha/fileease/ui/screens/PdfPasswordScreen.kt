@@ -299,7 +299,8 @@ private fun PasswordTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.95f))
+            // Fixed: Changed from SurfaceContainerLowest to Surface to match containerColor
+            .background(Surface.copy(alpha = 0.95f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -609,7 +610,8 @@ private fun PasswordBottomBar(isProcessing: Boolean, isComplete: Boolean, hasFil
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.98f))
+            // Fixed: Changed from SurfaceContainerLowest to Surface to match containerColor
+            .background(Surface.copy(alpha = 0.98f))
             .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
             .navigationBarsPadding()
     ) {
