@@ -1,7 +1,6 @@
 package com.subha.fileease.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -22,38 +21,42 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private val PrimaryLight = Color(0xFFEAF2FF)
-private val Background = Color(0xFFFFFFFF)
-private val CardBorder = Color(0xFFF1F5F9)
+// Exact color tokens from the Stitch HTML Tailwind config
+private val Surface = Color(0xFFFAF8FF)
+private val SurfaceContainerLowest = Color(0xFFFFFFFF)
+private val SurfaceContainerLow = Color(0xFFF2F3FF)
+private val OnSurface = Color(0xFF131B2E)
+private val OnSurfaceVariant = Color(0xFF424656)
+private val Primary = Color(0xFF0050CB)
 
 @Composable
-fun StudioScreen() {
+fun StudioScreen(onImagesToPdfClick: () -> Unit = {}) {
     Scaffold(
-        containerColor = Background
+        containerColor = Surface,
+        contentWindowInsets = WindowInsets(0.dp) // Blueprint: Immersive bleed
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 16.dp)
         ) {
             // Header Section
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = "Studio",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = TextPrimary,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = OnSurface,
                 letterSpacing = (-0.5).sp
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = "Advanced visual file modifications",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Normal,
-                color = TextSecondary,
-                letterSpacing = (-0.2).sp
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = OnSurfaceVariant
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -66,12 +69,14 @@ fun StudioScreen() {
                 StudioToolCard(
                     modifier = Modifier.weight(1f),
                     title = "Images to PDF",
-                    icon = Icons.Outlined.Image
+                    icon = Icons.Outlined.Image,
+                    onClick = onImagesToPdfClick // Route wired
                 )
                 StudioToolCard(
                     modifier = Modifier.weight(1f),
                     title = "PDF to Images",
-                    icon = Icons.Outlined.CollectionsBookmark
+                    icon = Icons.Outlined.CollectionsBookmark,
+                    onClick = { /* Not yet implemented */ }
                 )
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -79,12 +84,14 @@ fun StudioScreen() {
                 StudioToolCard(
                     modifier = Modifier.weight(1f),
                     title = "JPG to PNG",
-                    icon = Icons.Outlined.SwapHoriz
+                    icon = Icons.Outlined.SwapHoriz,
+                    onClick = { /* Not yet implemented */ }
                 )
                 StudioToolCard(
                     modifier = Modifier.weight(1f),
                     title = "Text to PDF",
-                    iconText = "A"
+                    iconText = "A",
+                    onClick = { /* Not yet implemented */ }
                 )
             }
 
@@ -98,12 +105,14 @@ fun StudioScreen() {
                 StudioToolCard(
                     modifier = Modifier.weight(1f),
                     title = "Crop Image",
-                    icon = Icons.Outlined.Crop
+                    icon = Icons.Outlined.Crop,
+                    onClick = { /* Not yet implemented */ }
                 )
                 StudioToolCard(
                     modifier = Modifier.weight(1f),
                     title = "Resize Image",
-                    icon = Icons.Outlined.OpenInFull
+                    icon = Icons.Outlined.OpenInFull,
+                    onClick = { /* Not yet implemented */ }
                 )
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -111,12 +120,14 @@ fun StudioScreen() {
                 StudioToolCard(
                     modifier = Modifier.weight(1f),
                     title = "Compress Image",
-                    icon = Icons.Outlined.Compress
+                    icon = Icons.Outlined.Compress,
+                    onClick = { /* Not yet implemented */ }
                 )
                 StudioToolCard(
                     modifier = Modifier.weight(1f),
                     title = "Rotate Image",
-                    icon = Icons.Outlined.RotateRight
+                    icon = Icons.Outlined.RotateRight,
+                    onClick = { /* Not yet implemented */ }
                 )
             }
 
@@ -133,15 +144,14 @@ fun SectionHeader(title: String) {
                 .width(4.dp)
                 .height(16.dp)
                 .clip(RoundedCornerShape(50))
-                .background(PrimaryBlue)
+                .background(Primary)
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = title,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = TextPrimary,
-            letterSpacing = (-0.2).sp
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            color = OnSurface
         )
     }
 }
@@ -151,21 +161,15 @@ fun StudioToolCard(
     modifier: Modifier = Modifier,
     title: String,
     icon: ImageVector? = null,
-    iconText: String? = null
+    iconText: String? = null,
+    onClick: () -> Unit
 ) {
     Column(
         modifier = modifier
             .heightIn(min = 108.dp)
-            .shadow(
-                elevation = 2.dp,
-                shape = RoundedCornerShape(16.dp),
-                ambientColor = Color.Black.copy(alpha = 0.03f),
-                spotColor = Color.Black.copy(alpha = 0.03f)
-            )
-            .border(1.dp, CardBorder, RoundedCornerShape(16.dp))
-            .clip(RoundedCornerShape(16.dp))
-            .background(Background)
-            .clickable { }
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
+            .clickable { onClick() }
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -174,14 +178,14 @@ fun StudioToolCard(
             modifier = Modifier
                 .size(44.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(PrimaryLight),
+                .background(SurfaceContainerLow),
             contentAlignment = Alignment.Center
         ) {
             if (icon != null) {
                 Icon(
                     imageVector = icon,
                     contentDescription = title,
-                    tint = PrimaryBlue,
+                    tint = Primary,
                     modifier = Modifier.size(24.dp)
                 )
             } else if (iconText != null) {
@@ -189,7 +193,7 @@ fun StudioToolCard(
                     text = iconText,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = PrimaryBlue
+                    color = Primary
                 )
             }
         }
@@ -198,11 +202,10 @@ fun StudioToolCard(
 
         Text(
             text = title,
-            fontSize = 12.sp,
+            fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
-            color = TextPrimary,
+            color = OnSurface,
             textAlign = TextAlign.Center,
-            letterSpacing = (-0.2).sp,
             lineHeight = 16.sp
         )
     }

@@ -135,7 +135,7 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
                     onMergeClick = { navController.navigate("pdf_merge") },
                     onSplitClick = { navController.navigate("pdf_split") },
                     onCompressClick = { navController.navigate("pdf_compress") },
-                    onImagesToPdfClick = { navController.navigate(BottomNavItem.ImageTools.route) },
+                    onImagesToPdfClick = { navController.navigate("images_to_pdf") }, // Route updated to direct screen
                     onViewAllClick = { navController.navigate(BottomNavItem.PdfTools.route) }
                 )
             }
@@ -162,7 +162,10 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
 
         composable(BottomNavItem.ImageTools.route) {
             Box(modifier = Modifier.fillMaxSize().padding(bottom = 90.dp)) {
-                StudioScreen()
+                // Injected the navigation lambda down to StudioScreen
+                StudioScreen(
+                    onImagesToPdfClick = { navController.navigate("images_to_pdf") }
+                )
             }
         }
 
@@ -184,6 +187,10 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
         }
         composable("pdf_extract") {
             PdfExtractScreen(onNavigateBack = { navController.popBackStack() })
+        }
+        // Attached new route
+        composable("images_to_pdf") {
+            ImagesToPdfScreen(onNavigateBack = { navController.popBackStack() })
         }
     }
 }
