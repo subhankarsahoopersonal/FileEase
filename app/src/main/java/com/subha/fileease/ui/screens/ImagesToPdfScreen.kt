@@ -1,12 +1,25 @@
 package com.subha.fileease.ui.screens
 
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,6 +43,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -37,8 +52,18 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import coil.compose.AsyncImage
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
+import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
+import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
+import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 // Exact Tailwind Color Tokens
 private val Surface = Color(0xFFFAF8FF)
@@ -60,33 +85,31 @@ private val Outline = Color(0xFF727687)
 private val OutlineVariant = Color(0xFFC2C6D8)
 private val Secondary = Color(0xFF0058BE)
 
-// Data class representing queued images
+// Upgraded Data class for actual Image Uris and Memory-Safe rendering
 data class QueuedImage(
     val id: String,
+    val uri: Uri,
     val name: String,
     val dimensions: String,
-    val sizeMb: String,
+    val sizeBytes: Long,
     var rotation: Float = 0f
 )
 
 @Composable
 fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
+    val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
+    val vibrator = remember { context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator }
     val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // State Management
-    var fileName by remember { mutableStateOf("Scan_Bundle_2024") }
+    var fileName by remember { mutableStateOf("Scan_Bundle_${System.currentTimeMillis() / 1000}") }
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
 
-    val imageQueue = remember {
-        mutableStateListOf(
-            QueuedImage("1", "IMG_2024_01.jpg", "3024 × 4032", "2.4 MB"),
-            QueuedImage("2", "Receipt_Scan.jpg", "1820 × 2960", "1.1 MB"),
-            QueuedImage("3", "Whiteboard_Notes.png", "2400 × 1600", "3.2 MB"),
-            QueuedImage("4", "ID_Card.jpg", "1080 × 1920", "980 KB")
-        )
-    }
+    // Phase 3: Empty queue ready for real device photos
+    val imageQueue = remember { mutableStateListOf<QueuedImage>() }
 
     var selectedPageSize by remember { mutableStateOf("A4") }
     var selectedOrientation by remember { mutableStateOf("Auto") }
@@ -94,24 +117,213 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
     var selectedFit by remember { mutableStateOf("Fit Entire") }
     var selectedDpi by remember { mutableStateOf(150) } // 150 or 300
 
+    // Phase 3: The Native Photo Picker Launcher
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            coroutineScope.launch(Dispatchers.IO) {
+                val newImages = uris.mapNotNull { uri ->
+                    var name = "Unknown_Image.jpg"
+                    var sizeBytes = 0L
+
+                    // Extract Metadata
+                    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                        if (cursor.moveToFirst()) {
+                            name = cursor.getString(nameIdx) ?: "Unknown_Image.jpg"
+                            sizeBytes = cursor.getLong(sizeIdx)
+                        }
+                    }
+
+                    // Extract Dimensions without loading full Bitmap into RAM
+                    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    context.contentResolver.openInputStream(uri)?.use {
+                        BitmapFactory.decodeStream(it, null, options)
+                    }
+                    val width = options.outWidth
+                    val height = options.outHeight
+                    val dimensions = if (width > 0 && height > 0) "$width × $height" else "Unknown dims"
+
+                    QueuedImage(
+                        id = uri.toString(),
+                        uri = uri,
+                        name = name,
+                        dimensions = dimensions,
+                        sizeBytes = sizeBytes
+                    )
+                }
+
+                withContext(Dispatchers.Main) {
+                    imageQueue.addAll(newImages)
+                }
+            }
+        }
+    }
+
     Scaffold(
         containerColor = Surface,
         topBar = { ImagesToPdfTopBar(onNavigateBack) },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
+            val totalBytes = imageQueue.sumOf { it.sizeBytes }
             ImagesToPdfBottomBar(
                 imageCount = imageQueue.size,
+                totalBytes = totalBytes,
                 isProcessing = isProcessing,
                 isComplete = isComplete,
                 onConvert = {
                     if (imageQueue.isNotEmpty()) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        coroutineScope.launch {
+                        coroutineScope.launch(Dispatchers.IO) {
                             isProcessing = true
-                            delay(1500) // Simulated build time
-                            isProcessing = false
-                            isComplete = true
-                            delay(2000)
-                            isComplete = false
+                            try {
+                                val document = PDDocument()
+                                val cleanFileName = fileName.removeSuffix(".pdf")
+                                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                                val outputFile = File(downloadsDir, "${cleanFileName}.pdf")
+
+                                // Margin Mathematics (1mm = 2.83465 points)
+                                val marginPt = when (selectedMargins) {
+                                    "Compact (5mm)" -> 14.17f
+                                    "Std (12mm)" -> 34.01f
+                                    else -> 0f
+                                }
+
+                                imageQueue.forEach { queuedImage ->
+                                    // Memory-Safe BitmapFactory Options
+                                    val options = BitmapFactory.Options()
+                                    if (selectedDpi == 150) {
+                                        options.inSampleSize = 2 // Downsamples 50% natively to prevent OOM
+                                    }
+
+                                    var bitmap = context.contentResolver.openInputStream(queuedImage.uri)?.use { stream ->
+                                        BitmapFactory.decodeStream(stream, null, options)
+                                    } ?: return@forEach
+
+                                    // Matrix Rotation
+                                    if (queuedImage.rotation != 0f) {
+                                        val matrix = Matrix().apply { postRotate(queuedImage.rotation) }
+                                        val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                                        if (rotated != bitmap) {
+                                            bitmap.recycle()
+                                            bitmap = rotated
+                                        }
+                                    }
+
+                                    // Page Dimensions Configuration
+                                    var pageW = PDRectangle.A4.width
+                                    var pageH = PDRectangle.A4.height
+                                    when (selectedPageSize) {
+                                        "US Letter" -> { pageW = PDRectangle.LETTER.width; pageH = PDRectangle.LETTER.height }
+                                        "Fit Image", "Original" -> { pageW = bitmap.width.toFloat(); pageH = bitmap.height.toFloat() }
+                                    }
+
+                                    // Orientation Calculations
+                                    val isImgLandscape = bitmap.width > bitmap.height
+                                    val isPageLandscape = when (selectedOrientation) {
+                                        "Landscape" -> true
+                                        "Portrait" -> false
+                                        else -> isImgLandscape
+                                    }
+
+                                    if (isPageLandscape && pageW < pageH) { val tmp = pageW; pageW = pageH; pageH = tmp }
+                                    else if (!isPageLandscape && pageW > pageH) { val tmp = pageW; pageW = pageH; pageH = tmp }
+
+                                    val page = PDPage(PDRectangle(pageW, pageH))
+                                    document.addPage(page)
+
+                                    // Quality Profiling
+                                    val compressionQuality = if (selectedDpi == 300) 0.95f else 0.75f
+                                    val pdImage = JPEGFactory.createFromImage(document, bitmap, compressionQuality)
+                                    val contentStream = PDPageContentStream(document, page)
+
+                                    val canvasW = pageW - (marginPt * 2)
+                                    val canvasH = pageH - (marginPt * 2)
+                                    val imgRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+                                    val canvasRatio = canvasW / canvasH
+
+                                    var drawW = canvasW
+                                    var drawH = canvasH
+                                    var startX = marginPt
+                                    var startY = marginPt
+
+                                    // Mathematical Fit Modes
+                                    when (selectedFit) {
+                                        "Fit Entire" -> {
+                                            if (imgRatio > canvasRatio) {
+                                                drawH = drawW / imgRatio
+                                                startY += (canvasH - drawH) / 2f
+                                            } else {
+                                                drawW = drawH * imgRatio
+                                                startX += (canvasW - drawW) / 2f
+                                            }
+                                        }
+                                        "Fill Page" -> {
+                                            if (imgRatio > canvasRatio) {
+                                                drawW = drawH * imgRatio
+                                                startX -= (drawW - canvasW) / 2f
+                                            } else {
+                                                drawH = drawW / imgRatio
+                                                startY -= (drawH - canvasH) / 2f
+                                            }
+                                        }
+                                        "Center" -> {
+                                            drawW = bitmap.width * 0.75f
+                                            drawH = bitmap.height * 0.75f
+                                            if (drawW > canvasW || drawH > canvasH) {
+                                                if (imgRatio > canvasRatio) { drawH = canvasW / imgRatio; drawW = canvasW }
+                                                else { drawW = canvasH * imgRatio; drawH = canvasH }
+                                            }
+                                            startX = marginPt + (canvasW - drawW) / 2f
+                                            startY = marginPt + (canvasH - drawH) / 2f
+                                        }
+                                    }
+
+                                    contentStream.drawImage(pdImage, startX, startY, drawW, drawH)
+                                    contentStream.close()
+                                    bitmap.recycle() // Force release RAM
+                                }
+
+                                document.save(outputFile)
+                                document.close()
+
+                                withContext(Dispatchers.Main) {
+                                    isProcessing = false
+                                    isComplete = true
+
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
+                                    } else {
+                                        @Suppress("DEPRECATION")
+                                        vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                    }
+
+                                    val result = snackbarHostState.showSnackbar(
+                                        message = "Success! PDF saved to Downloads",
+                                        actionLabel = "OPEN",
+                                        duration = SnackbarDuration.Long
+                                    )
+
+                                    if (result == SnackbarResult.ActionPerformed) {
+                                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", outputFile)
+                                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                                            setDataAndType(uri, "application/pdf")
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(Intent.createChooser(intent, "Open File"))
+                                    }
+                                    delay(2000)
+                                    isComplete = false
+                                    imageQueue.clear() // Reset queue after success
+                                }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    isProcessing = false
+                                    snackbarHostState.showSnackbar("Conversion failed: ${e.localizedMessage}")
+                                }
+                            }
                         }
                     }
                 }
@@ -223,7 +435,10 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                             index = index + 1,
                             onRotate = {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                img.rotation = (img.rotation + 90f) % 360f
+                                val currentIdx = imageQueue.indexOfFirst { it.id == img.id }
+                                if (currentIdx != -1) {
+                                    imageQueue[currentIdx] = img.copy(rotation = (img.rotation + 90f) % 360f)
+                                }
                             },
                             onDelete = {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -239,7 +454,10 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
                         .background(SurfaceContainer)
-                        .clickable { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
+                        .clickable {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        }
                         .padding(vertical = 14.dp, horizontal = 16.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
@@ -409,6 +627,7 @@ private fun ImagesToPdfTopBar(onNavigateBack: () -> Unit) {
 @Composable
 private fun QueueItemRow(item: QueuedImage, index: Int, onRotate: () -> Unit, onDelete: () -> Unit) {
     val rotation by animateFloatAsState(targetValue = item.rotation, label = "rotateAnim")
+    val sizeStr = "%.1f MB".format(item.sizeBytes / (1024.0 * 1024.0))
 
     Row(
         modifier = Modifier
@@ -423,9 +642,13 @@ private fun QueueItemRow(item: QueuedImage, index: Int, onRotate: () -> Unit, on
         }
 
         Box(modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerHigh)) {
-            Box(modifier = Modifier.fillMaxSize().rotate(rotation), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Image, contentDescription = null, tint = OutlineVariant, modifier = Modifier.size(28.dp))
-            }
+            // Coil AsyncImage rendering
+            AsyncImage(
+                model = item.uri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().rotate(rotation)
+            )
             Box(
                 modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp).clip(RoundedCornerShape(4.dp)).background(OnSurface.copy(alpha = 0.75f)).padding(horizontal = 4.dp, vertical = 2.dp)
             ) {
@@ -436,7 +659,7 @@ private fun QueueItemRow(item: QueuedImage, index: Int, onRotate: () -> Unit, on
         Spacer(modifier = Modifier.width(8.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(item.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("${item.dimensions} • ${item.sizeMb}", fontSize = 12.sp, color = OnSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("${item.dimensions} • $sizeStr", fontSize = 12.sp, color = OnSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -510,8 +733,9 @@ private fun QualityCard(modifier: Modifier, dpi: String, title: String, subtitle
 }
 
 @Composable
-private fun ImagesToPdfBottomBar(imageCount: Int, isProcessing: Boolean, isComplete: Boolean, onConvert: () -> Unit) {
-    val estimatedSize = if (imageCount > 0) "~${String.format("%.1f", imageCount * 0.95)} MB" else "0 MB"
+private fun ImagesToPdfBottomBar(imageCount: Int, totalBytes: Long, isProcessing: Boolean, isComplete: Boolean, onConvert: () -> Unit) {
+    val estimatedMb = totalBytes / (1024.0 * 1024.0)
+    val estimatedSize = if (imageCount > 0) "~${String.format("%.1f", estimatedMb)} MB" else "0 MB"
 
     val buttonText = when {
         isProcessing -> "Generating PDF..."
