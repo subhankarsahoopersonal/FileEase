@@ -1,12 +1,21 @@
 package com.subha.fileease.ui.screens
 
+import android.content.ContentValues
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.os.ParcelFileDescriptor
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -22,6 +31,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -44,8 +54,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 // Exact Tailwind Color Tokens
 private val Surface = Color(0xFFFAF8FF)
@@ -65,6 +81,7 @@ private val Error = Color(0xFFBA1A1A)
 private val ErrorContainer = Color(0xFFFFDAD6)
 private val Outline = Color(0xFF727687)
 private val OutlineVariant = Color(0xFFC2C6D8)
+private val Secondary = Color(0xFF0058BE)
 
 data class LoadedPdf(
     val uri: Uri,
@@ -77,7 +94,9 @@ data class LoadedPdf(
 fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
+    val vibrator = remember { context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator }
     val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // Document State
     var pdfDocument by remember { mutableStateOf<LoadedPdf?>(null) }
@@ -94,6 +113,10 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
 
     var saveAsZip by remember { mutableStateOf(true) }
     var saveToGallery by remember { mutableStateOf(false) }
+
+    // Engine Execution State
+    var isExtracting by remember { mutableStateOf(false) }
+    var isExtractionComplete by remember { mutableStateOf(false) }
 
     // Native PDF Picker Launcher
     val pdfPickerLauncher = rememberLauncherForActivityResult(
@@ -140,7 +163,7 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                             val bitmap = Bitmap.createBitmap(300, (300 * ratio).toInt(), Bitmap.Config.ARGB_8888)
 
                             // Fill solid white background (PDFs are natively transparent)
-                            val canvas = android.graphics.Canvas(bitmap)
+                            val canvas = Canvas(bitmap)
                             canvas.drawColor(android.graphics.Color.WHITE)
 
                             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
@@ -164,12 +187,121 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
     Scaffold(
         containerColor = Surface,
         topBar = { PdfToImagesTopBar(onNavigateBack) },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             PdfToImagesBottomBar(
                 selectedCount = selectedPages.size,
                 format = selectedFormat,
                 dpi = selectedDpi,
-                onExtract = { /* Phase 2: Implement Extraction Engine */ }
+                isProcessing = isExtracting,
+                isComplete = isExtractionComplete,
+                onExtract = {
+                    if (pdfDocument != null && selectedPages.isNotEmpty()) {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        coroutineScope.launch(Dispatchers.IO) {
+                            isExtracting = true
+                            try {
+                                val fd = context.contentResolver.openFileDescriptor(pdfDocument!!.uri, "r")
+                                if (fd != null) {
+                                    val renderer = PdfRenderer(fd)
+                                    val formatExt = selectedFormat.lowercase()
+                                    val compressFormat = when (selectedFormat) {
+                                        "PNG" -> Bitmap.CompressFormat.PNG
+                                        "WEBP" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY else @Suppress("DEPRECATION") Bitmap.CompressFormat.WEBP
+                                        else -> Bitmap.CompressFormat.JPEG
+                                    }
+                                    val quality = if (selectedFormat == "PNG") 100 else 90
+
+                                    val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                                    val baseName = pdfDocument!!.name.removeSuffix(".pdf").ifEmpty { "Extracted_Images" }
+
+                                    var zipOut: ZipOutputStream? = null
+                                    if (saveAsZip) {
+                                        val zipFile = File(downloadsDir, "${baseName}_images.zip")
+                                        zipOut = ZipOutputStream(FileOutputStream(zipFile))
+                                    }
+
+                                    // Render selected pages only
+                                    selectedPages.sorted().forEach { pageNum ->
+                                        val pageIdx = pageNum - 1
+                                        if (pageIdx in 0 until renderer.pageCount) {
+                                            val page = renderer.openPage(pageIdx)
+
+                                            // Exact Native Size Mathematics (PDF points to Target DPI pixels)
+                                            val widthPx = ((page.width / 72f) * selectedDpi).toInt()
+                                            val heightPx = ((page.height / 72f) * selectedDpi).toInt()
+
+                                            val bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
+                                            val canvas = Canvas(bitmap)
+                                            canvas.drawColor(android.graphics.Color.WHITE)
+
+                                            // Render mode set to PRINT for highest vector rendering quality
+                                            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
+                                            page.close()
+
+                                            val bos = ByteArrayOutputStream()
+                                            bitmap.compress(compressFormat, quality, bos)
+                                            val bitmapData = bos.toByteArray()
+                                            bitmap.recycle() // Force release RAM immediately
+
+                                            val fileName = "${baseName}_page_$pageNum.$formatExt"
+
+                                            // 1. Pack into Zip Archive
+                                            if (saveAsZip) {
+                                                zipOut?.putNextEntry(ZipEntry(fileName))
+                                                zipOut?.write(bitmapData)
+                                                zipOut?.closeEntry()
+                                            }
+
+                                            // 2. Inject natively into User's Gallery (Photos App)
+                                            if (saveToGallery) {
+                                                val values = ContentValues().apply {
+                                                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                                                    put(MediaStore.Images.Media.MIME_TYPE, "image/$formatExt")
+                                                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FileEase")
+                                                }
+                                                val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                                                uri?.let { destUri ->
+                                                    context.contentResolver.openOutputStream(destUri)?.use { outStream ->
+                                                        outStream.write(bitmapData)
+                                                    }
+                                                }
+                                            }
+
+                                            // 3. Fallback: Dump individual raw files to Downloads if both toggles are off
+                                            if (!saveAsZip && !saveToGallery) {
+                                                val rawFile = File(downloadsDir, fileName)
+                                                FileOutputStream(rawFile).use { it.write(bitmapData) }
+                                            }
+                                        }
+                                    }
+                                    zipOut?.close()
+                                    renderer.close()
+                                    fd.close()
+
+                                    withContext(Dispatchers.Main) {
+                                        isExtractionComplete = true
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                            vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
+                                        } else {
+                                            @Suppress("DEPRECATION")
+                                            vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                        }
+                                        snackbarHostState.showSnackbar("Extraction Complete!")
+                                        delay(2000)
+                                        isExtractionComplete = false
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    snackbarHostState.showSnackbar("Failed: ${e.localizedMessage}")
+                                }
+                            } finally {
+                                withContext(Dispatchers.Main) { isExtracting = false }
+                            }
+                        }
+                    }
+                }
             )
         },
         contentWindowInsets = WindowInsets(0.dp)
@@ -578,13 +710,37 @@ private fun CustomSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
 }
 
 @Composable
-private fun PdfToImagesBottomBar(selectedCount: Int, format: String, dpi: Int, onExtract: () -> Unit) {
+private fun PdfToImagesBottomBar(
+    selectedCount: Int,
+    format: String,
+    dpi: Int,
+    isProcessing: Boolean,
+    isComplete: Boolean,
+    onExtract: () -> Unit
+) {
     val estSize = when (format) {
         "PNG" -> if (dpi == 300) 1.4 else if (dpi == 150) 0.7 else 0.25
         "JPG" -> if (dpi == 300) 0.6 else if (dpi == 150) 0.35 else 0.15
         else -> if (dpi == 300) 0.45 else if (dpi == 150) 0.25 else 0.12
     }
     val totalMB = Math.max(1, (selectedCount * estSize).toInt())
+
+    val buttonText = when {
+        isProcessing -> "Extracting Pages..."
+        isComplete -> "Extraction Complete!"
+        selectedCount == 0 -> "Select pages to extract"
+        else -> "Extract ${if(selectedCount < 18) "$selectedCount " else ""}Pages as $format"
+    }
+
+    val buttonIcon = when {
+        isProcessing -> Icons.Outlined.Refresh
+        isComplete -> Icons.Filled.CheckCircle
+        else -> Icons.Outlined.PhotoLibrary
+    }
+
+    val buttonColor = if (isComplete) Secondary else if (selectedCount > 0) PrimaryContainer else SurfaceContainerHigh
+    val contentColor = if (selectedCount > 0 || isComplete) OnPrimaryContainer else OutlineVariant
+    val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 12.dp, label = "buttonShape")
 
     Column(
         modifier = Modifier
@@ -602,19 +758,26 @@ private fun PdfToImagesBottomBar(selectedCount: Int, format: String, dpi: Int, o
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
-                    .shadow(if (selectedCount > 0) 4.dp else 0.dp, RoundedCornerShape(12.dp), spotColor = PrimaryContainer.copy(alpha = 0.5f))
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (selectedCount > 0) PrimaryContainer else SurfaceContainerHigh)
-                    .clickable(enabled = selectedCount > 0) { onExtract() },
+                    .shadow(if (!isComplete && selectedCount > 0 && !isProcessing) 4.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.5f))
+                    .clip(RoundedCornerShape(cornerRadius))
+                    .background(if(selectedCount == 0) buttonColor.copy(alpha = 0.5f) else buttonColor)
+                    .clickable(enabled = selectedCount > 0 && !isProcessing && !isComplete) { onExtract() },
                 contentAlignment = Alignment.Center
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.PhotoLibrary, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(22.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        if (selectedCount > 0) "Extract ${if(selectedCount < 18) "$selectedCount " else ""}Pages as $format" else "Select pages to extract",
-                        fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnPrimaryContainer
-                    )
+                AnimatedContent(
+                    targetState = Pair(isProcessing, isComplete),
+                    label = "buttonContent"
+                ) { states ->
+                    val (processing, _) = states
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (processing) {
+                            CircularProgressIndicator(color = contentColor, modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp)
+                        } else {
+                            Icon(buttonIcon, contentDescription = null, tint = contentColor, modifier = Modifier.size(22.dp))
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                    }
                 }
             }
         }
