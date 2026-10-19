@@ -8,7 +8,6 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
-import android.os.ParcelFileDescriptor
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.MediaStore
@@ -18,6 +17,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
@@ -107,6 +107,7 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
     var selectedScope by remember { mutableStateOf("All Pages") }
     var customRange by remember { mutableStateOf("") }
     val selectedPages = remember { mutableStateListOf<Int>() }
+    var isGridExpanded by remember { mutableStateOf(false) }
 
     var selectedFormat by remember { mutableStateOf("PNG") }
     var selectedDpi by remember { mutableStateOf(300) }
@@ -118,6 +119,32 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
     var isExtracting by remember { mutableStateOf(false) }
     var isExtractionComplete by remember { mutableStateOf(false) }
 
+    // Smart Range Parser (Phase 3)
+    LaunchedEffect(customRange, selectedScope) {
+        if (selectedScope == "Page Range" && pdfDocument != null) {
+            val parsedSelection = mutableSetOf<Int>()
+            val parts = customRange.split(",")
+            for (part in parts) {
+                val p = part.trim()
+                if (p.contains("-")) {
+                    val bounds = p.split("-")
+                    if (bounds.size == 2) {
+                        val start = bounds[0].toIntOrNull()
+                        val end = bounds[1].toIntOrNull()
+                        if (start != null && end != null && start <= end) {
+                            parsedSelection.addAll(start..end)
+                        }
+                    }
+                } else {
+                    p.toIntOrNull()?.let { parsedSelection.add(it) }
+                }
+            }
+            val validSelection = parsedSelection.filter { it in 1..pdfDocument!!.pageCount }
+            selectedPages.clear()
+            selectedPages.addAll(validSelection)
+        }
+    }
+
     // Native PDF Picker Launcher
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -128,7 +155,6 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                 var name = "Document.pdf"
                 var sizeBytes = 0L
 
-                // 1. Extract Name & Size
                 context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                     val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                     val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
@@ -139,7 +165,6 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                 }
                 val sizeMb = "%.1f MB".format(sizeBytes / (1024.0 * 1024.0))
 
-                // 2. Load PDF & Render UI Thumbnails
                 var pageCount = 0
                 try {
                     val fd = context.contentResolver.openFileDescriptor(uri, "r")
@@ -147,22 +172,20 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                         val renderer = PdfRenderer(fd)
                         pageCount = renderer.pageCount
 
-                        // Clear old data
                         withContext(Dispatchers.Main) {
                             pageThumbnails.clear()
                             selectedPages.clear()
                             selectedPages.addAll(1..pageCount)
                             selectedScope = "All Pages"
+                            customRange = ""
+                            isGridExpanded = false
                         }
 
-                        // Render lightweight thumbnails safely
                         for (i in 0 until pageCount) {
                             val page = renderer.openPage(i)
-                            // Scale down width to 300px for memory-safe scrolling UI
                             val ratio = page.height.toFloat() / page.width.toFloat()
                             val bitmap = Bitmap.createBitmap(300, (300 * ratio).toInt(), Bitmap.Config.ARGB_8888)
 
-                            // Fill solid white background (PDFs are natively transparent)
                             val canvas = Canvas(bitmap)
                             canvas.drawColor(android.graphics.Color.WHITE)
 
@@ -221,13 +244,10 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                                         zipOut = ZipOutputStream(FileOutputStream(zipFile))
                                     }
 
-                                    // Render selected pages only
                                     selectedPages.sorted().forEach { pageNum ->
                                         val pageIdx = pageNum - 1
                                         if (pageIdx in 0 until renderer.pageCount) {
                                             val page = renderer.openPage(pageIdx)
-
-                                            // Exact Native Size Mathematics (PDF points to Target DPI pixels)
                                             val widthPx = ((page.width / 72f) * selectedDpi).toInt()
                                             val heightPx = ((page.height / 72f) * selectedDpi).toInt()
 
@@ -235,25 +255,22 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                                             val canvas = Canvas(bitmap)
                                             canvas.drawColor(android.graphics.Color.WHITE)
 
-                                            // Render mode set to PRINT for highest vector rendering quality
                                             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
                                             page.close()
 
                                             val bos = ByteArrayOutputStream()
                                             bitmap.compress(compressFormat, quality, bos)
                                             val bitmapData = bos.toByteArray()
-                                            bitmap.recycle() // Force release RAM immediately
+                                            bitmap.recycle()
 
                                             val fileName = "${baseName}_page_$pageNum.$formatExt"
 
-                                            // 1. Pack into Zip Archive
                                             if (saveAsZip) {
                                                 zipOut?.putNextEntry(ZipEntry(fileName))
                                                 zipOut?.write(bitmapData)
                                                 zipOut?.closeEntry()
                                             }
 
-                                            // 2. Inject natively into User's Gallery (Photos App)
                                             if (saveToGallery) {
                                                 val values = ContentValues().apply {
                                                     put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
@@ -268,7 +285,6 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                                                 }
                                             }
 
-                                            // 3. Fallback: Dump individual raw files to Downloads if both toggles are off
                                             if (!saveAsZip && !saveToGallery) {
                                                 val rawFile = File(downloadsDir, fileName)
                                                 FileOutputStream(rawFile).use { it.write(bitmapData) }
@@ -324,7 +340,6 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
 
             // PDF File Source Card
             if (pdfDocument == null) {
-                // Empty State
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -345,7 +360,6 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                     Text("Tap to browse files on your device", fontSize = 12.sp, color = OnSurfaceVariant)
                 }
             } else {
-                // Loaded File State
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -398,7 +412,6 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                 }
             }
 
-            // Only show extraction tools if a PDF is loaded
             AnimatedVisibility(visible = pdfDocument != null) {
                 Column {
                     Spacer(modifier = Modifier.height(24.dp))
@@ -421,6 +434,10 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                         onSelect = {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             selectedScope = it
+                            if (it == "All Pages") {
+                                selectedPages.clear()
+                                pdfDocument?.let { doc -> selectedPages.addAll(1..doc.pageCount) }
+                            }
                         }
                     )
 
@@ -460,44 +477,69 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                                 CircularProgressIndicator(color = Primary, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
                             }
                         } else {
-                            val pages = (1..(pdfDocument?.pageCount ?: 0)).toList()
-                            pages.chunked(3).forEach { row ->
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    row.forEach { pageNum ->
-                                        val isSelected = selectedPages.contains(pageNum)
-                                        val thumbnail = pageThumbnails[pageNum]
+                            val allPages = (1..(pdfDocument?.pageCount ?: 0)).toList()
+                            val pagesToDisplay = if (isGridExpanded) allPages else allPages.take(6)
 
-                                        Column(
-                                            modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).clickable {
-                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                if (isSelected) selectedPages.remove(pageNum) else selectedPages.add(pageNum)
-                                                selectedScope = "Selected Only" // Auto switch scope
-                                            }.padding(6.dp)
-                                        ) {
-                                            Box(modifier = Modifier.fillMaxWidth().aspectRatio(0.75f).clip(RoundedCornerShape(4.dp)).background(SurfaceContainer)) {
-                                                if (thumbnail != null) {
-                                                    Image(bitmap = thumbnail.asImageBitmap(), contentDescription = "Page $pageNum", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                                                } else {
-                                                    Icon(Icons.Outlined.Description, contentDescription = null, tint = OutlineVariant, modifier = Modifier.align(Alignment.Center).size(24.dp))
-                                                }
+                            // Phase 3: Animate Content Size for Expandable Grid
+                            Column(modifier = Modifier.animateContentSize()) {
+                                pagesToDisplay.chunked(3).forEach { row ->
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        row.forEach { pageNum ->
+                                            val isSelected = selectedPages.contains(pageNum)
+                                            val thumbnail = pageThumbnails[pageNum]
 
-                                                if (isSelected) {
-                                                    Box(modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp).clip(CircleShape).background(PrimaryContainer).shadow(1.dp), contentAlignment = Alignment.Center) {
-                                                        Icon(Icons.Filled.Check, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(14.dp))
+                                            Column(
+                                                modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).clickable {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    if (isSelected) selectedPages.remove(pageNum) else selectedPages.add(pageNum)
+                                                    selectedScope = "Selected Only" // Syncs mode automatically
+                                                }.padding(6.dp)
+                                            ) {
+                                                Box(modifier = Modifier.fillMaxWidth().aspectRatio(0.75f).clip(RoundedCornerShape(4.dp)).background(SurfaceContainer)) {
+                                                    if (thumbnail != null) {
+                                                        Image(bitmap = thumbnail.asImageBitmap(), contentDescription = "Page $pageNum", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                                    } else {
+                                                        Icon(Icons.Outlined.Description, contentDescription = null, tint = OutlineVariant, modifier = Modifier.align(Alignment.Center).size(24.dp))
+                                                    }
+
+                                                    if (isSelected) {
+                                                        Box(modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp).clip(CircleShape).background(PrimaryContainer).shadow(1.dp), contentAlignment = Alignment.Center) {
+                                                            Icon(Icons.Filled.Check, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(14.dp))
+                                                        }
                                                     }
                                                 }
-                                            }
-                                            Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                                                Text("Page $pageNum", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                                                Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                                    Text("Page $pageNum", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                                                }
                                             }
                                         }
+                                        if (row.size < 3) {
+                                            repeat(3 - row.size) { Spacer(modifier = Modifier.weight(1f)) }
+                                        }
                                     }
-                                    // Fill empty spaces in the last row if not divisible by 3
-                                    if (row.size < 3) {
-                                        repeat(3 - row.size) { Spacer(modifier = Modifier.weight(1f)) }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                }
+                            }
+
+                            if (allPages.size > 6) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(SurfaceContainerHigh.copy(alpha = 0.6f))
+                                        .clickable {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            isGridExpanded = !isGridExpanded
+                                        }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(if (isGridExpanded) "Show less" else "Show all ${allPages.size} thumbnail previews", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant)
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Icon(if (isGridExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(16.dp))
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(8.dp))
                             }
                         }
                     }
