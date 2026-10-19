@@ -115,7 +115,7 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
     val focusManager = LocalFocusManager.current
     val nameFocusRequester = remember { FocusRequester() }
 
-    var fileName by remember { mutableStateOf("Scan_Bundle_${System.currentTimeMillis() / 1000}") }
+    var fileName by remember { mutableStateOf("Image_to_PDF_${System.currentTimeMillis() / 1000}") }
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
 
