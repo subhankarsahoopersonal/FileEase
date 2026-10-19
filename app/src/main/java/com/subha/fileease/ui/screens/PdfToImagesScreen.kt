@@ -641,24 +641,32 @@ private fun PdfToImagesTopBar(onNavigateBack: () -> Unit) {
 
 @Composable
 private fun SegmentControlRow(options: List<String>, selected: String, onSelect: (String) -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(SurfaceContainer).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(SurfaceContainer)
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
         options.forEach { option ->
             val isSelected = selected == option
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(6.dp))
-                    .background(if (isSelected) SurfaceContainerLowest else Color.Transparent)
-                    .shadow(if (isSelected) 1.dp else 0.dp, RoundedCornerShape(6.dp))
+                    // Uses Primary solid blue instead of white
+                    .background(if (isSelected) Primary else Color.Transparent)
                     .clickable { onSelect(option) }
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = option,
-                    fontSize = 13.sp,
-                    fontWeight = if(isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                    color = if(isSelected) PrimaryContainer else OnSurfaceVariant,
+                    fontSize = 11.sp,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                    // Uses OnPrimary (white) text instead of blue text
+                    color = if (isSelected) OnPrimary else OnSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
             }
