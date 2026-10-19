@@ -12,7 +12,6 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -28,6 +27,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
@@ -40,14 +41,18 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -64,6 +69,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
 
 // Exact Tailwind Color Tokens
 private val Surface = Color(0xFFFAF8FF)
@@ -102,24 +108,26 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
     val vibrator = remember { context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator }
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val focusManager = LocalFocusManager.current
+    val nameFocusRequester = remember { FocusRequester() }
 
     // State Management
-    var fileName by remember { mutableStateOf("Scan_Bundle_${System.currentTimeMillis() / 1000}") }
+    var fileName by remember { mutableStateOf("Image_to_PDF_${System.currentTimeMillis() / 1000}") }
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
 
-    // Phase 3: Empty queue ready for real device photos
+    // The Active Queue
     val imageQueue = remember { mutableStateListOf<QueuedImage>() }
 
     var selectedPageSize by remember { mutableStateOf("A4") }
     var selectedOrientation by remember { mutableStateOf("Auto") }
     var selectedMargins by remember { mutableStateOf("Compact (5mm)") }
     var selectedFit by remember { mutableStateOf("Fit Entire") }
-    var selectedDpi by remember { mutableStateOf(150) } // 150 or 300
+    var selectedDpi by remember { mutableStateOf(150) }
 
-    // Phase 3: The Native Photo Picker Launcher
+    // FIX: Using GetMultipleContents for 100% universal Android OS compatibility
     val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
+        contract = ActivityResultContracts.GetMultipleContents()
     ) { uris ->
         if (uris.isNotEmpty()) {
             coroutineScope.launch(Dispatchers.IO) {
@@ -127,27 +135,32 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                     var name = "Unknown_Image.jpg"
                     var sizeBytes = 0L
 
-                    // Extract Metadata
-                    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                        val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                        val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
-                        if (cursor.moveToFirst()) {
-                            name = cursor.getString(nameIdx) ?: "Unknown_Image.jpg"
-                            sizeBytes = cursor.getLong(sizeIdx)
+                    // Extract Metadata safely
+                    try {
+                        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                            val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                            val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                            if (cursor.moveToFirst()) {
+                                name = cursor.getString(nameIdx) ?: "Unknown_Image.jpg"
+                                sizeBytes = cursor.getLong(sizeIdx)
+                            }
                         }
-                    }
+                    } catch (e: Exception) { e.printStackTrace() }
 
-                    // Extract Dimensions without loading full Bitmap into RAM
+                    // Extract Dimensions safely without loading full Bitmap
                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    context.contentResolver.openInputStream(uri)?.use {
-                        BitmapFactory.decodeStream(it, null, options)
-                    }
+                    try {
+                        context.contentResolver.openInputStream(uri)?.use {
+                            BitmapFactory.decodeStream(it, null, options)
+                        }
+                    } catch (e: Exception) { e.printStackTrace() }
+
                     val width = options.outWidth
                     val height = options.outHeight
                     val dimensions = if (width > 0 && height > 0) "$width × $height" else "Unknown dims"
 
                     QueuedImage(
-                        id = uri.toString(),
+                        id = UUID.randomUUID().toString(), // Guaranteed unique key
                         uri = uri,
                         name = name,
                         dimensions = dimensions,
@@ -176,153 +189,156 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                 onConvert = {
                     if (imageQueue.isNotEmpty()) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        coroutineScope.launch(Dispatchers.IO) {
+                        coroutineScope.launch {
+                            // FIX: Must update Compose UI state on the Main Thread BEFORE switching to IO
                             isProcessing = true
-                            try {
-                                val document = PDDocument()
-                                val cleanFileName = fileName.removeSuffix(".pdf")
-                                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                                val outputFile = File(downloadsDir, "${cleanFileName}.pdf")
 
-                                // Margin Mathematics (1mm = 2.83465 points)
-                                val marginPt = when (selectedMargins) {
-                                    "Compact (5mm)" -> 14.17f
-                                    "Std (12mm)" -> 34.01f
-                                    else -> 0f
-                                }
+                            var success = false
+                            var finalOutputFile: File? = null
+                            var errorMessage = "Unknown Error"
 
-                                imageQueue.forEach { queuedImage ->
-                                    // Memory-Safe BitmapFactory Options
-                                    val options = BitmapFactory.Options()
-                                    if (selectedDpi == 150) {
-                                        options.inSampleSize = 2 // Downsamples 50% natively to prevent OOM
+                            withContext(Dispatchers.IO) {
+                                try {
+                                    val document = PDDocument()
+                                    val cleanFileName = fileName.trim().ifEmpty { "Generated_PDF" }.removeSuffix(".pdf")
+                                    val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                                    val outputFile = File(downloadsDir, "${cleanFileName}.pdf")
+
+                                    val marginPt = when (selectedMargins) {
+                                        "Compact (5mm)" -> 14.17f
+                                        "Std (12mm)" -> 34.01f
+                                        else -> 0f
                                     }
 
-                                    var bitmap = context.contentResolver.openInputStream(queuedImage.uri)?.use { stream ->
-                                        BitmapFactory.decodeStream(stream, null, options)
-                                    } ?: return@forEach
-
-                                    // Matrix Rotation
-                                    if (queuedImage.rotation != 0f) {
-                                        val matrix = Matrix().apply { postRotate(queuedImage.rotation) }
-                                        val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-                                        if (rotated != bitmap) {
-                                            bitmap.recycle()
-                                            bitmap = rotated
+                                    imageQueue.forEach { queuedImage ->
+                                        val options = BitmapFactory.Options()
+                                        if (selectedDpi == 150) {
+                                            options.inSampleSize = 2
                                         }
-                                    }
 
-                                    // Page Dimensions Configuration
-                                    var pageW = PDRectangle.A4.width
-                                    var pageH = PDRectangle.A4.height
-                                    when (selectedPageSize) {
-                                        "US Letter" -> { pageW = PDRectangle.LETTER.width; pageH = PDRectangle.LETTER.height }
-                                        "Fit Image", "Original" -> { pageW = bitmap.width.toFloat(); pageH = bitmap.height.toFloat() }
-                                    }
+                                        var bitmap = context.contentResolver.openInputStream(queuedImage.uri)?.use { stream ->
+                                            BitmapFactory.decodeStream(stream, null, options)
+                                        } ?: return@forEach
 
-                                    // Orientation Calculations
-                                    val isImgLandscape = bitmap.width > bitmap.height
-                                    val isPageLandscape = when (selectedOrientation) {
-                                        "Landscape" -> true
-                                        "Portrait" -> false
-                                        else -> isImgLandscape
-                                    }
-
-                                    if (isPageLandscape && pageW < pageH) { val tmp = pageW; pageW = pageH; pageH = tmp }
-                                    else if (!isPageLandscape && pageW > pageH) { val tmp = pageW; pageW = pageH; pageH = tmp }
-
-                                    val page = PDPage(PDRectangle(pageW, pageH))
-                                    document.addPage(page)
-
-                                    // Quality Profiling
-                                    val compressionQuality = if (selectedDpi == 300) 0.95f else 0.75f
-                                    val pdImage = JPEGFactory.createFromImage(document, bitmap, compressionQuality)
-                                    val contentStream = PDPageContentStream(document, page)
-
-                                    val canvasW = pageW - (marginPt * 2)
-                                    val canvasH = pageH - (marginPt * 2)
-                                    val imgRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
-                                    val canvasRatio = canvasW / canvasH
-
-                                    var drawW = canvasW
-                                    var drawH = canvasH
-                                    var startX = marginPt
-                                    var startY = marginPt
-
-                                    // Mathematical Fit Modes
-                                    when (selectedFit) {
-                                        "Fit Entire" -> {
-                                            if (imgRatio > canvasRatio) {
-                                                drawH = drawW / imgRatio
-                                                startY += (canvasH - drawH) / 2f
-                                            } else {
-                                                drawW = drawH * imgRatio
-                                                startX += (canvasW - drawW) / 2f
+                                        if (queuedImage.rotation != 0f) {
+                                            val matrix = Matrix().apply { postRotate(queuedImage.rotation) }
+                                            val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                                            if (rotated != bitmap) {
+                                                bitmap.recycle()
+                                                bitmap = rotated
                                             }
                                         }
-                                        "Fill Page" -> {
-                                            if (imgRatio > canvasRatio) {
-                                                drawW = drawH * imgRatio
-                                                startX -= (drawW - canvasW) / 2f
-                                            } else {
-                                                drawH = drawW / imgRatio
-                                                startY -= (drawH - canvasH) / 2f
+
+                                        var pageW = PDRectangle.A4.width
+                                        var pageH = PDRectangle.A4.height
+                                        when (selectedPageSize) {
+                                            "US Letter" -> { pageW = PDRectangle.LETTER.width; pageH = PDRectangle.LETTER.height }
+                                            "Fit Image", "Original" -> { pageW = bitmap.width.toFloat(); pageH = bitmap.height.toFloat() }
+                                        }
+
+                                        val isImgLandscape = bitmap.width > bitmap.height
+                                        val isPageLandscape = when (selectedOrientation) {
+                                            "Landscape" -> true
+                                            "Portrait" -> false
+                                            else -> isImgLandscape
+                                        }
+
+                                        if (isPageLandscape && pageW < pageH) { val tmp = pageW; pageW = pageH; pageH = tmp }
+                                        else if (!isPageLandscape && pageW > pageH) { val tmp = pageW; pageW = pageH; pageH = tmp }
+
+                                        val page = PDPage(PDRectangle(pageW, pageH))
+                                        document.addPage(page)
+
+                                        val compressionQuality = if (selectedDpi == 300) 0.95f else 0.75f
+                                        val pdImage = JPEGFactory.createFromImage(document, bitmap, compressionQuality)
+                                        val contentStream = PDPageContentStream(document, page)
+
+                                        val canvasW = pageW - (marginPt * 2)
+                                        val canvasH = pageH - (marginPt * 2)
+                                        val imgRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+                                        val canvasRatio = canvasW / canvasH
+
+                                        var drawW = canvasW
+                                        var drawH = canvasH
+                                        var startX = marginPt
+                                        var startY = marginPt
+
+                                        when (selectedFit) {
+                                            "Fit Entire" -> {
+                                                if (imgRatio > canvasRatio) {
+                                                    drawH = drawW / imgRatio
+                                                    startY += (canvasH - drawH) / 2f
+                                                } else {
+                                                    drawW = drawH * imgRatio
+                                                    startX += (canvasW - drawW) / 2f
+                                                }
+                                            }
+                                            "Fill Page" -> {
+                                                if (imgRatio > canvasRatio) {
+                                                    drawW = drawH * imgRatio
+                                                    startX -= (drawW - canvasW) / 2f
+                                                } else {
+                                                    drawH = drawW / imgRatio
+                                                    startY -= (drawH - canvasH) / 2f
+                                                }
+                                            }
+                                            "Center" -> {
+                                                drawW = bitmap.width * 0.75f
+                                                drawH = bitmap.height * 0.75f
+                                                if (drawW > canvasW || drawH > canvasH) {
+                                                    if (imgRatio > canvasRatio) { drawH = canvasW / imgRatio; drawW = canvasW }
+                                                    else { drawW = canvasH * imgRatio; drawH = canvasH }
+                                                }
+                                                startX = marginPt + (canvasW - drawW) / 2f
+                                                startY = marginPt + (canvasH - drawH) / 2f
                                             }
                                         }
-                                        "Center" -> {
-                                            drawW = bitmap.width * 0.75f
-                                            drawH = bitmap.height * 0.75f
-                                            if (drawW > canvasW || drawH > canvasH) {
-                                                if (imgRatio > canvasRatio) { drawH = canvasW / imgRatio; drawW = canvasW }
-                                                else { drawW = canvasH * imgRatio; drawH = canvasH }
-                                            }
-                                            startX = marginPt + (canvasW - drawW) / 2f
-                                            startY = marginPt + (canvasH - drawH) / 2f
-                                        }
+
+                                        contentStream.drawImage(pdImage, startX, startY, drawW, drawH)
+                                        contentStream.close()
+                                        bitmap.recycle()
                                     }
 
-                                    contentStream.drawImage(pdImage, startX, startY, drawW, drawH)
-                                    contentStream.close()
-                                    bitmap.recycle() // Force release RAM
+                                    document.save(outputFile)
+                                    document.close()
+                                    finalOutputFile = outputFile
+                                    success = true
+                                } catch (e: Exception) {
+                                    errorMessage = e.localizedMessage ?: "Unknown processing error"
+                                }
+                            }
+
+                            // Return to Main thread to update UI
+                            isProcessing = false
+                            if (success && finalOutputFile != null) {
+                                isComplete = true
+
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
                                 }
 
-                                document.save(outputFile)
-                                document.close()
+                                val result = snackbarHostState.showSnackbar(
+                                    message = "Success! PDF saved to Downloads",
+                                    actionLabel = "OPEN",
+                                    duration = SnackbarDuration.Long
+                                )
 
-                                withContext(Dispatchers.Main) {
-                                    isProcessing = false
-                                    isComplete = true
-
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                        vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
-                                    } else {
-                                        @Suppress("DEPRECATION")
-                                        vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", finalOutputFile!!)
+                                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(uri, "application/pdf")
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                     }
-
-                                    val result = snackbarHostState.showSnackbar(
-                                        message = "Success! PDF saved to Downloads",
-                                        actionLabel = "OPEN",
-                                        duration = SnackbarDuration.Long
-                                    )
-
-                                    if (result == SnackbarResult.ActionPerformed) {
-                                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", outputFile)
-                                        val intent = Intent(Intent.ACTION_VIEW).apply {
-                                            setDataAndType(uri, "application/pdf")
-                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        }
-                                        context.startActivity(Intent.createChooser(intent, "Open File"))
-                                    }
-                                    delay(2000)
-                                    isComplete = false
-                                    imageQueue.clear() // Reset queue after success
+                                    context.startActivity(Intent.createChooser(intent, "Open File"))
                                 }
-                            } catch (e: Exception) {
-                                withContext(Dispatchers.Main) {
-                                    isProcessing = false
-                                    snackbarHostState.showSnackbar("Conversion failed: ${e.localizedMessage}")
-                                }
+                                delay(2000)
+                                isComplete = false
+                                imageQueue.clear()
+                            } else {
+                                snackbarHostState.showSnackbar("Conversion failed: $errorMessage")
                             }
                         }
                     }
@@ -343,7 +359,6 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Informational Context & Offline Assurance
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
                         text = "Convert photo gallery & scans into a structured PDF document",
@@ -388,14 +403,20 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                                     value = fileName,
                                     onValueChange = { fileName = it },
                                     textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface),
-                                    modifier = Modifier.weight(1f, fill = false),
-                                    singleLine = true
+                                    modifier = Modifier.weight(1f, fill = false).focusRequester(nameFocusRequester),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() })
                                 )
                                 Text(".pdf", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Outline)
                             }
                         }
                     }
-                    Box(modifier = Modifier.size(32.dp).clip(CircleShape).clickable { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }.padding(4.dp), contentAlignment = Alignment.Center) {
+                    // FIX: Wired FocusRequester to open keyboard when tapped
+                    Box(modifier = Modifier.size(32.dp).clip(CircleShape).clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        nameFocusRequester.requestFocus()
+                    }.padding(4.dp), contentAlignment = Alignment.Center) {
                         Icon(Icons.Outlined.Edit, contentDescription = "Edit", tint = OnSurfaceVariant, modifier = Modifier.size(18.dp))
                     }
                 }
@@ -456,7 +477,7 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                         .background(SurfaceContainer)
                         .clickable {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            photoPickerLauncher.launch("image/*") // Launching Universal Content Picker
                         }
                         .padding(vertical = 14.dp, horizontal = 16.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -490,7 +511,6 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                         selectedPageSize = it
                     }
 
-                    // Orientation with Icons
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("ORIENTATION", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant, letterSpacing = 0.5.sp)
                         Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(SurfaceContainer).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -642,7 +662,6 @@ private fun QueueItemRow(item: QueuedImage, index: Int, onRotate: () -> Unit, on
         }
 
         Box(modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerHigh)) {
-            // Coil AsyncImage rendering
             AsyncImage(
                 model = item.uri,
                 contentDescription = null,
