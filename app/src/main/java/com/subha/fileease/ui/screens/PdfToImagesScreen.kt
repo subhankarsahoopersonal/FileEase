@@ -119,7 +119,7 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
     var isExtracting by remember { mutableStateOf(false) }
     var isExtractionComplete by remember { mutableStateOf(false) }
 
-    // Smart Range Parser (Phase 3)
+    // Smart Range Parser
     LaunchedEffect(customRange, selectedScope) {
         if (selectedScope == "Page Range" && pdfDocument != null) {
             val parsedSelection = mutableSetOf<Int>()
@@ -236,11 +236,15 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                                     val quality = if (selectedFormat == "PNG") 100 else 90
 
                                     val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                                    val baseName = pdfDocument!!.name.removeSuffix(".pdf").ifEmpty { "Extracted_Images" }
+
+                                    // FIX: Dynamic Naming Logic
+                                    val baseName = pdfDocument!!.name.removeSuffix(".pdf").ifEmpty { "PDF_to_Images" }
 
                                     var zipOut: ZipOutputStream? = null
                                     if (saveAsZip) {
-                                        val zipFile = File(downloadsDir, "${baseName}_images.zip")
+                                        // FIX: Use the new baseName or default to PDF_to_Images.zip if name is blank
+                                        val zipFileName = if (pdfDocument!!.name.isNotBlank()) "${baseName}_images.zip" else "PDF_to_Images.zip"
+                                        val zipFile = File(downloadsDir, zipFileName)
                                         zipOut = ZipOutputStream(FileOutputStream(zipFile))
                                     }
 
@@ -330,13 +334,6 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                 .padding(horizontal = 16.dp)
         ) {
             Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "Extract high-resolution image pages from PDF document",
-                fontSize = 13.sp,
-                color = OnSurfaceVariant,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
 
             // PDF File Source Card
             if (pdfDocument == null) {
@@ -480,7 +477,6 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                             val allPages = (1..(pdfDocument?.pageCount ?: 0)).toList()
                             val pagesToDisplay = if (isGridExpanded) allPages else allPages.take(6)
 
-                            // Phase 3: Animate Content Size for Expandable Grid
                             Column(modifier = Modifier.animateContentSize()) {
                                 pagesToDisplay.chunked(3).forEach { row ->
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -492,7 +488,7 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                                                 modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).clickable {
                                                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                     if (isSelected) selectedPages.remove(pageNum) else selectedPages.add(pageNum)
-                                                    selectedScope = "Selected Only" // Syncs mode automatically
+                                                    selectedScope = "Selected Only"
                                                 }.padding(6.dp)
                                             ) {
                                                 Box(modifier = Modifier.fillMaxWidth().aspectRatio(0.75f).clip(RoundedCornerShape(4.dp)).background(SurfaceContainer)) {
@@ -609,9 +605,10 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                     // Packaging & Destination
                     Text("Packaging & Destination", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, modifier = Modifier.padding(bottom = 8.dp))
                     Column(modifier = Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(12.dp)).background(SurfaceContainerLowest, RoundedCornerShape(12.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // FIX: Updated Subtitle UI Text to match the backend logic changes
                         PackagingRow(
                             title = "Save as single ZIP archive",
-                            subtitle = "Bundles all pages into catalog_images.zip",
+                            subtitle = if (pdfDocument?.name?.isNotBlank() == true) "Bundles into ${pdfDocument!!.name.removeSuffix(".pdf")}_images.zip" else "Bundles all pages into PDF_to_Images.zip",
                             icon = Icons.Outlined.FolderZip,
                             iconTint = Primary,
                             isChecked = saveAsZip,
