@@ -30,10 +30,13 @@ private val OnSurfaceVariant = Color(0xFF424656)
 private val Primary = Color(0xFF0050CB)
 
 @Composable
-fun StudioScreen(onImagesToPdfClick: () -> Unit = {}) {
+fun StudioScreen(
+    onImagesToPdfClick: () -> Unit = {},
+    onPdfToImagesClick: () -> Unit = {} // <-- INJECTED ROUTE TRIGGER
+) {
     Scaffold(
         containerColor = Surface,
-        contentWindowInsets = WindowInsets(0.dp) // Blueprint: Immersive bleed
+        contentWindowInsets = WindowInsets(0.dp)
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -70,13 +73,13 @@ fun StudioScreen(onImagesToPdfClick: () -> Unit = {}) {
                     modifier = Modifier.weight(1f),
                     title = "Images to PDF",
                     icon = Icons.Outlined.Image,
-                    onClick = onImagesToPdfClick // Route wired
+                    onClick = onImagesToPdfClick
                 )
                 StudioToolCard(
                     modifier = Modifier.weight(1f),
                     title = "PDF to Images",
                     icon = Icons.Outlined.CollectionsBookmark,
-                    onClick = { /* Not yet implemented */ }
+                    onClick = onPdfToImagesClick // <-- CONNECTED TO CARD
                 )
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -167,7 +170,7 @@ fun StudioToolCard(
     Column(
         modifier = modifier
             .heightIn(min = 108.dp)
-            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f)) // Blueprint: Z-Axis Depth
+            .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
             .clickable { onClick() }
             .padding(16.dp),
