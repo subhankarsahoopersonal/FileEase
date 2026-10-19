@@ -1,5 +1,6 @@
 package com.subha.fileease.ui.screens
 
+import android.R.attr.translationZ
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -22,6 +23,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -44,10 +46,13 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
@@ -91,7 +96,6 @@ private val Outline = Color(0xFF727687)
 private val OutlineVariant = Color(0xFFC2C6D8)
 private val Secondary = Color(0xFF0058BE)
 
-// Upgraded Data class for actual Image Uris and Memory-Safe rendering
 data class QueuedImage(
     val id: String,
     val uri: Uri,
@@ -111,12 +115,10 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
     val focusManager = LocalFocusManager.current
     val nameFocusRequester = remember { FocusRequester() }
 
-    // State Management
-    var fileName by remember { mutableStateOf("Image_to_PDF_${System.currentTimeMillis() / 1000}") }
+    var fileName by remember { mutableStateOf("Scan_Bundle_${System.currentTimeMillis() / 1000}") }
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
 
-    // The Active Queue
     val imageQueue = remember { mutableStateListOf<QueuedImage>() }
 
     var selectedPageSize by remember { mutableStateOf("A4") }
@@ -125,7 +127,6 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
     var selectedFit by remember { mutableStateOf("Fit Entire") }
     var selectedDpi by remember { mutableStateOf(150) }
 
-    // FIX: Using GetMultipleContents for 100% universal Android OS compatibility
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
     ) { uris ->
@@ -134,8 +135,6 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                 val newImages = uris.mapNotNull { uri ->
                     var name = "Unknown_Image.jpg"
                     var sizeBytes = 0L
-
-                    // Extract Metadata safely
                     try {
                         context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                             val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -147,7 +146,6 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                         }
                     } catch (e: Exception) { e.printStackTrace() }
 
-                    // Extract Dimensions safely without loading full Bitmap
                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     try {
                         context.contentResolver.openInputStream(uri)?.use {
@@ -160,14 +158,13 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                     val dimensions = if (width > 0 && height > 0) "$width × $height" else "Unknown dims"
 
                     QueuedImage(
-                        id = UUID.randomUUID().toString(), // Guaranteed unique key
+                        id = UUID.randomUUID().toString(),
                         uri = uri,
                         name = name,
                         dimensions = dimensions,
                         sizeBytes = sizeBytes
                     )
                 }
-
                 withContext(Dispatchers.Main) {
                     imageQueue.addAll(newImages)
                 }
@@ -190,9 +187,7 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                     if (imageQueue.isNotEmpty()) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         coroutineScope.launch {
-                            // FIX: Must update Compose UI state on the Main Thread BEFORE switching to IO
                             isProcessing = true
-
                             var success = false
                             var finalOutputFile: File? = null
                             var errorMessage = "Unknown Error"
@@ -212,9 +207,7 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
 
                                     imageQueue.forEach { queuedImage ->
                                         val options = BitmapFactory.Options()
-                                        if (selectedDpi == 150) {
-                                            options.inSampleSize = 2
-                                        }
+                                        if (selectedDpi == 150) options.inSampleSize = 2
 
                                         var bitmap = context.contentResolver.openInputStream(queuedImage.uri)?.use { stream ->
                                             BitmapFactory.decodeStream(stream, null, options)
@@ -308,11 +301,9 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                                 }
                             }
 
-                            // Return to Main thread to update UI
                             isProcessing = false
                             if (success && finalOutputFile != null) {
                                 isComplete = true
-
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                     vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
                                 } else {
@@ -430,22 +421,65 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                         }
                     }
 
-                    imageQueue.forEachIndexed { index, img ->
-                        QueueItemRow(
-                            item = img,
-                            index = index + 1,
-                            onRotate = {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                val currentIdx = imageQueue.indexOfFirst { it.id == img.id }
-                                if (currentIdx != -1) {
-                                    imageQueue[currentIdx] = img.copy(rotation = (img.rotation + 90f) % 360f)
+                    // Drag and Drop State Holders
+                    var draggedId by remember { mutableStateOf<String?>(null) }
+                    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+                    val itemHeightPx = with(LocalDensity.current) { 80.dp.toPx() }
+
+                    // Active Sorting Queue
+                    imageQueue.forEachIndexed { _, img ->
+                        key(img.id) {
+                            val isDragged = draggedId == img.id
+                            val offsetY = if (isDragged) dragOffsetY else 0f
+                            val currentIndex = imageQueue.indexOfFirst { it.id == img.id }
+
+                            QueueItemRow(
+                                item = img,
+                                index = currentIndex + 1,
+                                isDragged = isDragged,
+                                offsetY = offsetY,
+                                onRotate = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    val idx = imageQueue.indexOfFirst { it.id == img.id }
+                                    if (idx != -1) imageQueue[idx] = img.copy(rotation = (img.rotation + 90f) % 360f)
+                                },
+                                onDelete = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    imageQueue.remove(img)
+                                },
+                                onDragStart = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    draggedId = img.id
+                                    dragOffsetY = 0f
+                                },
+                                onDrag = { dragAmount ->
+                                    dragOffsetY += dragAmount
+                                    if (dragOffsetY > itemHeightPx * 0.65f) { // Dragged down
+                                        val idx = imageQueue.indexOfFirst { it.id == img.id }
+                                        if (idx != -1 && idx < imageQueue.size - 1) {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            val temp = imageQueue[idx]
+                                            imageQueue[idx] = imageQueue[idx + 1]
+                                            imageQueue[idx + 1] = temp
+                                            dragOffsetY -= itemHeightPx // Seamlessly correct visual offset
+                                        }
+                                    } else if (dragOffsetY < -itemHeightPx * 0.65f) { // Dragged up
+                                        val idx = imageQueue.indexOfFirst { it.id == img.id }
+                                        if (idx > 0) {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            val temp = imageQueue[idx]
+                                            imageQueue[idx] = imageQueue[idx - 1]
+                                            imageQueue[idx - 1] = temp
+                                            dragOffsetY += itemHeightPx // Seamlessly correct visual offset
+                                        }
+                                    }
+                                },
+                                onDragEnd = {
+                                    draggedId = null
+                                    dragOffsetY = 0f
                                 }
-                            },
-                            onDelete = {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                imageQueue.remove(img)
-                            }
-                        )
+                            )
+                        }
                     }
                 }
 
@@ -457,7 +491,7 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                         .background(SurfaceContainer)
                         .clickable {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            photoPickerLauncher.launch("image/*") // Launching Universal Content Picker
+                            photoPickerLauncher.launch("image/*")
                         }
                         .padding(vertical = 14.dp, horizontal = 16.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -586,46 +620,68 @@ private fun ImagesToPdfTopBar(onNavigateBack: () -> Unit) {
             .background(Surface.copy(alpha = 0.90f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
             .padding(horizontal = 16.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(
-                modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Images To Pdf", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
+        Box(
+            modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(44.dp).clip(CircleShape).clickable { }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Info, contentDescription = "Info", tint = OnSurfaceVariant, modifier = Modifier.size(22.dp))
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(Primary).shadow(1.dp), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Person, contentDescription = "User", tint = OnPrimary, modifier = Modifier.size(18.dp))
-            }
-        }
+        Spacer(modifier = Modifier.width(4.dp))
+        Text("Images To Pdf", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
     }
 }
 
 @Composable
-private fun QueueItemRow(item: QueuedImage, index: Int, onRotate: () -> Unit, onDelete: () -> Unit) {
+private fun QueueItemRow(
+    item: QueuedImage,
+    index: Int,
+    isDragged: Boolean,
+    offsetY: Float,
+    onRotate: () -> Unit,
+    onDelete: () -> Unit,
+    onDragStart: () -> Unit,
+    onDrag: (Float) -> Unit,
+    onDragEnd: () -> Unit
+) {
     val rotation by animateFloatAsState(targetValue = item.rotation, label = "rotateAnim")
     val sizeStr = "%.1f MB".format(item.sizeBytes / (1024.0 * 1024.0))
+    val elevation by animateDpAsState(targetValue = if (isDragged) 12.dp else 1.dp, label = "elevationAnim")
+    val scale by animateFloatAsState(targetValue = if (isDragged) 1.02f else 1f, label = "scaleAnim")
 
     Row(
         modifier = Modifier
+            .graphicsLayer {
+                translationY = offsetY
+                scaleX = scale
+                scaleY = scale
+                // FIX: Removed the invalid translationZ property completely.
+                // The shadow modifier below natively elevates the item on the Z-axis.
+            }
             .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(12.dp), spotColor = Color.Black.copy(alpha = 0.04f))
+            .shadow(elevation, RoundedCornerShape(12.dp), spotColor = Color.Black.copy(alpha = if (isDragged) 0.1f else 0.04f))
             .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(modifier = Modifier.width(28.dp), contentAlignment = Alignment.Center) {
-            Icon(Icons.Outlined.DragIndicator, contentDescription = "Drag", tint = Outline, modifier = Modifier.size(20.dp))
+        Box(
+            modifier = Modifier
+                .width(36.dp)
+                .height(56.dp)
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragStart = { onDragStart() },
+                        onDragEnd = { onDragEnd() },
+                        onDragCancel = { onDragEnd() }
+                    ) { change, dragAmount ->
+                        change.consume()
+                        onDrag(dragAmount)
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Outlined.DragIndicator, contentDescription = "Drag to reorder", tint = Outline, modifier = Modifier.size(24.dp))
         }
 
         Box(modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerHigh)) {
