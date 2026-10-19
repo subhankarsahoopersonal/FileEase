@@ -359,25 +359,6 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "Convert photo gallery & scans into a structured PDF document",
-                        fontSize = 13.sp,
-                        color = OnSurfaceVariant
-                    )
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(SurfaceContainerHigh.copy(alpha = 0.7f))
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Outlined.VerifiedUser, contentDescription = null, tint = Primary, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("100% On-Device Processing · Zero Cloud Upload", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
-                    }
-                }
-
                 // Document Filename Card
                 Row(
                     modifier = Modifier
@@ -412,7 +393,6 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
                             }
                         }
                     }
-                    // FIX: Wired FocusRequester to open keyboard when tapped
                     Box(modifier = Modifier.size(32.dp).clip(CircleShape).clickable {
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         nameFocusRequester.requestFocus()
@@ -600,12 +580,6 @@ fun ImagesToPdfScreen(onNavigateBack: () -> Unit) {
 
 @Composable
 private fun ImagesToPdfTopBar(onNavigateBack: () -> Unit) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val alphaPulse by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 0.3f,
-        animationSpec = infiniteRepeatable(tween(800, easing = FastOutLinearInEasing), RepeatMode.Reverse), label = "alphaPulse"
-    )
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -623,14 +597,7 @@ private fun ImagesToPdfTopBar(onNavigateBack: () -> Unit) {
                 Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
             }
             Spacer(modifier = Modifier.width(4.dp))
-            Column {
-                Text("Images To Pdf", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerHigh.copy(alpha=0.6f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(PrimaryContainer).alpha(alphaPulse))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Offline Engine Active • 100% On-device", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = OnSurfaceVariant)
-                }
-            }
+            Text("Images To Pdf", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.size(44.dp).clip(CircleShape).clickable { }, contentAlignment = Alignment.Center) {
