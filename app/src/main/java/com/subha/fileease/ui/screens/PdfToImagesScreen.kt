@@ -1,12 +1,18 @@
 package com.subha.fileease.ui.screens
 
+import android.graphics.Bitmap
+import android.graphics.pdf.PdfRenderer
+import android.net.Uri
+import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -25,13 +31,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // Exact Tailwind Color Tokens
 private val Surface = Color(0xFFFAF8FF)
@@ -52,12 +66,28 @@ private val ErrorContainer = Color(0xFFFFDAD6)
 private val Outline = Color(0xFF727687)
 private val OutlineVariant = Color(0xFFC2C6D8)
 
+data class LoadedPdf(
+    val uri: Uri,
+    val name: String,
+    val sizeMb: String,
+    val pageCount: Int
+)
+
 @Composable
 fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
-    // State Management
-    var selectedScope by remember { mutableStateOf("All Pages (18)") }
-    var customRange by remember { mutableStateOf("1-6, 12, 18") }
-    val selectedPages = remember { mutableStateListOf(1, 2, 3, 4, 5, 6) }
+    val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
+    val coroutineScope = rememberCoroutineScope()
+
+    // Document State
+    var pdfDocument by remember { mutableStateOf<LoadedPdf?>(null) }
+    val pageThumbnails = remember { mutableStateMapOf<Int, Bitmap>() }
+    var isRenderingThumbnails by remember { mutableStateOf(false) }
+
+    // Settings State
+    var selectedScope by remember { mutableStateOf("All Pages") }
+    var customRange by remember { mutableStateOf("") }
+    val selectedPages = remember { mutableStateListOf<Int>() }
 
     var selectedFormat by remember { mutableStateOf("PNG") }
     var selectedDpi by remember { mutableStateOf(300) }
@@ -65,10 +95,71 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
     var saveAsZip by remember { mutableStateOf(true) }
     var saveToGallery by remember { mutableStateOf(false) }
 
-    val dummyPages = listOf(
-        Pair(1, "Cover"), Pair(2, "Index"), Pair(3, "Specs"),
-        Pair(4, "Diagram"), Pair(5, "Tiers"), Pair(6, "Back")
-    )
+    // Native PDF Picker Launcher
+    val pdfPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch(Dispatchers.IO) {
+                isRenderingThumbnails = true
+                var name = "Document.pdf"
+                var sizeBytes = 0L
+
+                // 1. Extract Name & Size
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (cursor.moveToFirst()) {
+                        name = cursor.getString(nameIdx) ?: "Document.pdf"
+                        sizeBytes = cursor.getLong(sizeIdx)
+                    }
+                }
+                val sizeMb = "%.1f MB".format(sizeBytes / (1024.0 * 1024.0))
+
+                // 2. Load PDF & Render UI Thumbnails
+                var pageCount = 0
+                try {
+                    val fd = context.contentResolver.openFileDescriptor(uri, "r")
+                    if (fd != null) {
+                        val renderer = PdfRenderer(fd)
+                        pageCount = renderer.pageCount
+
+                        // Clear old data
+                        withContext(Dispatchers.Main) {
+                            pageThumbnails.clear()
+                            selectedPages.clear()
+                            selectedPages.addAll(1..pageCount)
+                            selectedScope = "All Pages"
+                        }
+
+                        // Render lightweight thumbnails safely
+                        for (i in 0 until pageCount) {
+                            val page = renderer.openPage(i)
+                            // Scale down width to 300px for memory-safe scrolling UI
+                            val ratio = page.height.toFloat() / page.width.toFloat()
+                            val bitmap = Bitmap.createBitmap(300, (300 * ratio).toInt(), Bitmap.Config.ARGB_8888)
+
+                            // Fill solid white background (PDFs are natively transparent)
+                            val canvas = android.graphics.Canvas(bitmap)
+                            canvas.drawColor(android.graphics.Color.WHITE)
+
+                            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            page.close()
+
+                            withContext(Dispatchers.Main) { pageThumbnails[i + 1] = bitmap }
+                        }
+                        renderer.close()
+                        fd.close()
+                    }
+                } catch (e: Exception) { e.printStackTrace() }
+
+                withContext(Dispatchers.Main) {
+                    pdfDocument = LoadedPdf(uri, name, sizeMb, pageCount)
+                    isRenderingThumbnails = false
+                }
+            }
+        }
+    }
 
     Scaffold(
         containerColor = Surface,
@@ -78,7 +169,7 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                 selectedCount = selectedPages.size,
                 format = selectedFormat,
                 dpi = selectedDpi,
-                onExtract = { /* Handle extraction */ }
+                onExtract = { /* Phase 2: Implement Extraction Engine */ }
             )
         },
         contentWindowInsets = WindowInsets(0.dp)
@@ -99,215 +190,269 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                 modifier = Modifier.padding(bottom = 12.dp)
             )
 
-            // PDF File Card
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(1.dp, RoundedCornerShape(12.dp))
-                    .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
-                    .padding(16.dp)
-            ) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                    Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.Top) {
-                        Box(
-                            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(ErrorContainer),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = Error, modifier = Modifier.size(26.dp))
+            // PDF File Source Card
+            if (pdfDocument == null) {
+                // Empty State
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .shadow(1.dp, RoundedCornerShape(12.dp))
+                        .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+                        .clickable {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            pdfPickerLauncher.launch("application/pdf")
                         }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text("Product_Catalog_2024.pdf", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
-                                Text("18 pages", fontSize = 11.sp, color = OnSurfaceVariant)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("14.2 MB", fontSize = 11.sp, color = OnSurfaceVariant)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryFixed).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                    Text("Ready", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(PrimaryContainer.copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Outlined.UploadFile, contentDescription = null, tint = Primary, modifier = Modifier.size(28.dp))
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Select PDF Document", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+                    Text("Tap to browse files on your device", fontSize = 12.sp, color = OnSurfaceVariant)
+                }
+            } else {
+                // Loaded File State
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .shadow(1.dp, RoundedCornerShape(12.dp))
+                        .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+                        .padding(16.dp)
+                ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.Top) {
+                            Box(
+                                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(ErrorContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = Error, modifier = Modifier.size(26.dp))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(pdfDocument!!.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                                    Text("${pdfDocument!!.pageCount} pages", fontSize = 11.sp, color = OnSurfaceVariant)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(pdfDocument!!.sizeMb, fontSize = 11.sp, color = OnSurfaceVariant)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(OutlineVariant))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryFixed).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                                        Text("Ready", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                                    }
                                 }
                             }
                         }
+                        Box(modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(SurfaceContainer).clickable {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            pdfPickerLauncher.launch("application/pdf")
+                        }.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                            Text("Change", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                        }
                     }
-                    Box(modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(SurfaceContainer).clickable { }.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        Text("Change", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.VerifiedUser, contentDescription = null, tint = Primary, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Local Engine • 0 KB network used", fontSize = 10.sp, color = OnSurfaceVariant)
+                        }
+                        Text("Native Android Renderer", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
                     }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.VerifiedUser, contentDescription = null, tint = Primary, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Local Engine • 0 KB network used", fontSize = 10.sp, color = OnSurfaceVariant)
-                    }
-                    Text("RGB · sRGB Profile", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            // Only show extraction tools if a PDF is loaded
+            AnimatedVisibility(visible = pdfDocument != null) {
+                Column {
+                    Spacer(modifier = Modifier.height(24.dp))
 
-            // Extraction Scope Section
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Extraction Scope", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                Text("Select All (18)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = PrimaryContainer, modifier = Modifier.clickable {
-                    selectedScope = "All Pages (18)"
-                    selectedPages.clear()
-                    selectedPages.addAll(1..18)
-                })
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-
-            SegmentControlRow(
-                options = listOf("All Pages (18)", "Page Range", "Selected Only"),
-                selected = selectedScope,
-                onSelect = { selectedScope = it }
-            )
-
-            AnimatedVisibility(visible = selectedScope == "Page Range") {
-                Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp).shadow(1.dp, RoundedCornerShape(12.dp)).background(SurfaceContainerLowest, RoundedCornerShape(12.dp)).padding(12.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Specify custom pages", fontSize = 11.sp, color = OnSurfaceVariant)
-                        Text("e.g. 1-5, 8, 12", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                    // Extraction Scope Section
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Extraction Scope", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                        Text("Select All (${pdfDocument?.pageCount ?: 0})", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = PrimaryContainer, modifier = Modifier.clickable {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            selectedScope = "All Pages"
+                            selectedPages.clear()
+                            pdfDocument?.let { doc -> selectedPages.addAll(1..doc.pageCount) }
+                        })
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.EditNote, contentDescription = null, tint = Outline, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        BasicTextField(
-                            value = customRange,
-                            onValueChange = { customRange = it },
-                            textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface),
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
+
+                    SegmentControlRow(
+                        options = listOf("All Pages", "Page Range", "Selected Only"),
+                        selected = selectedScope,
+                        onSelect = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            selectedScope = it
+                        }
+                    )
+
+                    AnimatedVisibility(visible = selectedScope == "Page Range") {
+                        Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp).shadow(1.dp, RoundedCornerShape(12.dp)).background(SurfaceContainerLowest, RoundedCornerShape(12.dp)).padding(12.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Specify custom pages", fontSize = 11.sp, color = OnSurfaceVariant)
+                                Text("e.g. 1-5, 8, 12", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.EditNote, contentDescription = null, tint = Outline, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                BasicTextField(
+                                    value = customRange,
+                                    onValueChange = { customRange = it },
+                                    textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Visual Page Selector
+                    Column(modifier = Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(12.dp)).background(SurfaceContainerLowest, RoundedCornerShape(12.dp)).padding(12.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("Visual Page Selector", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                            Text("${selectedPages.size} of ${pdfDocument?.pageCount ?: 0} selected", fontSize = 10.sp, color = OnSurfaceVariant)
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        if (isRenderingThumbnails) {
+                            Box(modifier = Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = Primary, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                            }
+                        } else {
+                            val pages = (1..(pdfDocument?.pageCount ?: 0)).toList()
+                            pages.chunked(3).forEach { row ->
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    row.forEach { pageNum ->
+                                        val isSelected = selectedPages.contains(pageNum)
+                                        val thumbnail = pageThumbnails[pageNum]
+
+                                        Column(
+                                            modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).clickable {
+                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                if (isSelected) selectedPages.remove(pageNum) else selectedPages.add(pageNum)
+                                                selectedScope = "Selected Only" // Auto switch scope
+                                            }.padding(6.dp)
+                                        ) {
+                                            Box(modifier = Modifier.fillMaxWidth().aspectRatio(0.75f).clip(RoundedCornerShape(4.dp)).background(SurfaceContainer)) {
+                                                if (thumbnail != null) {
+                                                    Image(bitmap = thumbnail.asImageBitmap(), contentDescription = "Page $pageNum", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                                } else {
+                                                    Icon(Icons.Outlined.Description, contentDescription = null, tint = OutlineVariant, modifier = Modifier.align(Alignment.Center).size(24.dp))
+                                                }
+
+                                                if (isSelected) {
+                                                    Box(modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp).clip(CircleShape).background(PrimaryContainer).shadow(1.dp), contentAlignment = Alignment.Center) {
+                                                        Icon(Icons.Filled.Check, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(14.dp))
+                                                    }
+                                                }
+                                            }
+                                            Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                                Text("Page $pageNum", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                                            }
+                                        }
+                                    }
+                                    // Fill empty spaces in the last row if not divisible by 3
+                                    if (row.size < 3) {
+                                        repeat(3 - row.size) { Spacer(modifier = Modifier.weight(1f)) }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // Export Image Format
+                    Text("Export Image Format", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, modifier = Modifier.padding(bottom = 8.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FormatCard(modifier = Modifier.weight(1f), format = "PNG", subtitle = "Lossless", icon = Icons.Filled.Verified, isSelected = selectedFormat == "PNG") {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "PNG"
+                        }
+                        FormatCard(modifier = Modifier.weight(1f), format = "JPG", subtitle = "Compact", icon = Icons.Outlined.Image, isSelected = selectedFormat == "JPG") {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "JPG"
+                        }
+                        FormatCard(modifier = Modifier.weight(1f), format = "WEBP", subtitle = "Web Opt.", icon = Icons.Outlined.Public, isSelected = selectedFormat == "WEBP") {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "WEBP"
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // DPI Settings
+                    Column(modifier = Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(12.dp)).background(SurfaceContainerLowest, RoundedCornerShape(12.dp)).padding(16.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.GridOn, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Resolution & DPI Preset", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                            }
+                            Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryFixed).padding(horizontal = 8.dp, vertical = 2.dp)) {
+                                Text("$selectedDpi DPI", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        SegmentControlRow(
+                            options = listOf("Screen (72)", "Standard (150)", "Ultra (300)"),
+                            selected = when(selectedDpi) { 300 -> "Ultra (300)"; 150 -> "Standard (150)"; else -> "Screen (72)" },
+                            onSelect = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                selectedDpi = when(it) {
+                                    "Ultra (300)" -> 300
+                                    "Standard (150)" -> 150
+                                    else -> 72
+                                }
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        val dimSummary = when(selectedDpi) { 300 -> "2480 × 3508 px / page"; 150 -> "1240 × 1754 px / page"; else -> "595 × 842 px / page" }
+                        val dpiProgress by animateFloatAsState(targetValue = when(selectedDpi) { 300 -> 1f; 150 -> 0.6f; else -> 0.25f }, label = "progress")
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Target Render Dimensions", fontSize = 10.sp, color = OnSurfaceVariant)
+                            Text(dimSummary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Box(modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)).background(SurfaceContainer)) {
+                            Box(modifier = Modifier.fillMaxWidth(dpiProgress).fillMaxHeight().clip(RoundedCornerShape(50)).background(PrimaryContainer))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // Packaging & Destination
+                    Text("Packaging & Destination", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, modifier = Modifier.padding(bottom = 8.dp))
+                    Column(modifier = Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(12.dp)).background(SurfaceContainerLowest, RoundedCornerShape(12.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PackagingRow(
+                            title = "Save as single ZIP archive",
+                            subtitle = "Bundles all pages into catalog_images.zip",
+                            icon = Icons.Outlined.FolderZip,
+                            iconTint = Primary,
+                            isChecked = saveAsZip,
+                            onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); saveAsZip = it }
+                        )
+                        PackagingRow(
+                            title = "Save individually to Photos",
+                            subtitle = "Write extracted frames to gallery album",
+                            icon = Icons.Outlined.PhotoLibrary,
+                            iconTint = OnSurfaceVariant,
+                            isChecked = saveToGallery,
+                            onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); saveToGallery = it }
                         )
                     }
                 }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Visual Page Selector
-            Column(modifier = Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(12.dp)).background(SurfaceContainerLowest, RoundedCornerShape(12.dp)).padding(12.dp)) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Visual Page Selector", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                    Text("${selectedPages.size} of 18 selected", fontSize = 10.sp, color = OnSurfaceVariant)
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-
-                dummyPages.chunked(3).forEach { row ->
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.forEach { page ->
-                            val isSelected = selectedPages.contains(page.first)
-                            Column(
-                                modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).clickable {
-                                    if (isSelected) selectedPages.remove(page.first) else selectedPages.add(page.first)
-                                }.padding(6.dp)
-                            ) {
-                                Box(modifier = Modifier.fillMaxWidth().aspectRatio(0.75f).clip(RoundedCornerShape(4.dp)).background(SurfaceContainer)) {
-                                    Icon(Icons.Outlined.Description, contentDescription = null, tint = OutlineVariant, modifier = Modifier.align(Alignment.Center).size(24.dp))
-                                    if (isSelected) {
-                                        Box(modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp).clip(CircleShape).background(PrimaryContainer).shadow(1.dp), contentAlignment = Alignment.Center) {
-                                            Icon(Icons.Filled.Check, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(14.dp))
-                                        }
-                                    }
-                                }
-                                Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Page ${page.first}", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                                    Text(page.second, fontSize = 10.sp, color = Outline)
-                                }
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-
-                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(SurfaceContainerHigh.copy(alpha = 0.6f)).clickable { }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Show all 18 thumbnail previews", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(Icons.Outlined.ExpandMore, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(16.dp))
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Export Image Format
-            Text("Export Image Format", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, modifier = Modifier.padding(bottom = 8.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FormatCard(modifier = Modifier.weight(1f), format = "PNG", subtitle = "Lossless · Alpha", icon = Icons.Filled.Verified, isSelected = selectedFormat == "PNG") { selectedFormat = "PNG" }
-                FormatCard(modifier = Modifier.weight(1f), format = "JPG", subtitle = "Compact size", icon = Icons.Outlined.Image, isSelected = selectedFormat == "JPG") { selectedFormat = "JPG" }
-                FormatCard(modifier = Modifier.weight(1f), format = "WEBP", subtitle = "Web Optimized", icon = Icons.Outlined.Public, isSelected = selectedFormat == "WEBP") { selectedFormat = "WEBP" }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // DPI Settings
-            Column(modifier = Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(12.dp)).background(SurfaceContainerLowest, RoundedCornerShape(12.dp)).padding(16.dp)) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.GridOn, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Resolution & DPI Preset", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                    }
-                    Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryFixed).padding(horizontal = 8.dp, vertical = 2.dp)) {
-                        Text("$selectedDpi DPI", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
-                    }
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-
-                SegmentControlRow(
-                    options = listOf("Screen (72)", "Standard (150)", "Ultra (300)"),
-                    selected = when(selectedDpi) { 300 -> "Ultra (300)"; 150 -> "Standard (150)"; else -> "Screen (72)" },
-                    onSelect = {
-                        selectedDpi = when(it) {
-                            "Ultra (300)" -> 300
-                            "Standard (150)" -> 150
-                            else -> 72
-                        }
-                    }
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                val dimSummary = when(selectedDpi) { 300 -> "2480 × 3508 px / page"; 150 -> "1240 × 1754 px / page"; else -> "595 × 842 px / page" }
-                val dpiProgress by animateFloatAsState(targetValue = when(selectedDpi) { 300 -> 1f; 150 -> 0.6f; else -> 0.25f }, label = "progress")
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Target Render Dimensions", fontSize = 10.sp, color = OnSurfaceVariant)
-                    Text(dimSummary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                }
-                Spacer(modifier = Modifier.height(6.dp))
-                Box(modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)).background(SurfaceContainer)) {
-                    Box(modifier = Modifier.fillMaxWidth(dpiProgress).fillMaxHeight().clip(RoundedCornerShape(50)).background(PrimaryContainer))
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Packaging & Destination
-            Text("Packaging & Destination", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, modifier = Modifier.padding(bottom = 8.dp))
-            Column(modifier = Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(12.dp)).background(SurfaceContainerLowest, RoundedCornerShape(12.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                PackagingRow(
-                    title = "Save as single ZIP archive",
-                    subtitle = "Bundles all pages into catalog_images.zip",
-                    icon = Icons.Outlined.FolderZip,
-                    iconTint = Primary,
-                    isChecked = saveAsZip,
-                    onCheckedChange = { saveAsZip = it }
-                )
-                PackagingRow(
-                    title = "Save individually to Photos",
-                    subtitle = "Write extracted frames to gallery album",
-                    icon = Icons.Outlined.PhotoLibrary,
-                    iconTint = OnSurfaceVariant,
-                    isChecked = saveToGallery,
-                    onCheckedChange = { saveToGallery = it }
-                )
             }
 
             Spacer(modifier = Modifier.height(120.dp))
