@@ -236,13 +236,10 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                                     val quality = if (selectedFormat == "PNG") 100 else 90
 
                                     val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-
-                                    // FIX: Dynamic Naming Logic
                                     val baseName = pdfDocument!!.name.removeSuffix(".pdf").ifEmpty { "PDF_to_Images" }
 
                                     var zipOut: ZipOutputStream? = null
                                     if (saveAsZip) {
-                                        // FIX: Use the new baseName or default to PDF_to_Images.zip if name is blank
                                         val zipFileName = if (pdfDocument!!.name.isNotBlank()) "${baseName}_images.zip" else "PDF_to_Images.zip"
                                         val zipFile = File(downloadsDir, zipFileName)
                                         zipOut = ZipOutputStream(FileOutputStream(zipFile))
@@ -396,15 +393,6 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                         }.padding(horizontal = 12.dp, vertical = 6.dp)) {
                             Text("Change", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Primary)
                         }
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Outlined.VerifiedUser, contentDescription = null, tint = Primary, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Local Engine • 0 KB network used", fontSize = 10.sp, color = OnSurfaceVariant)
-                        }
-                        Text("Native Android Renderer", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
                     }
                 }
             }
@@ -605,7 +593,6 @@ fun PdfToImagesScreen(onNavigateBack: () -> Unit) {
                     // Packaging & Destination
                     Text("Packaging & Destination", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, modifier = Modifier.padding(bottom = 8.dp))
                     Column(modifier = Modifier.fillMaxWidth().shadow(1.dp, RoundedCornerShape(12.dp)).background(SurfaceContainerLowest, RoundedCornerShape(12.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // FIX: Updated Subtitle UI Text to match the backend logic changes
                         PackagingRow(
                             title = "Save as single ZIP archive",
                             subtitle = if (pdfDocument?.name?.isNotBlank() == true) "Bundles into ${pdfDocument!!.name.removeSuffix(".pdf")}_images.zip" else "Bundles all pages into PDF_to_Images.zip",
