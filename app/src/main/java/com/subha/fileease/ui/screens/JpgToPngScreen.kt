@@ -1,6 +1,7 @@
 package com.subha.fileease.ui.screens
 
 import android.content.ContentValues
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.net.Uri
@@ -54,7 +55,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -95,10 +95,11 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Engine State
+    // Engine & Output State
     var loadedImage by remember { mutableStateOf<LoadedJpg?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
+    var outputUri by remember { mutableStateOf<Uri?>(null) }
 
     // UI State
     var selectedFormat by remember { mutableStateOf("PNG") }
@@ -140,6 +141,8 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
 
                     withContext(Dispatchers.Main) {
                         loadedImage = LoadedJpg(uri, name, dims, sizeMb, sizeBytes)
+                        isComplete = false
+                        outputUri = null
                     }
                 } catch (e: Exception) { e.printStackTrace() }
             }
@@ -165,9 +168,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                 val sourceBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                                     val source = ImageDecoder.createSource(context.contentResolver, loadedImage!!.uri)
                                     ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
-                                        // Hardware allocation configures the memory buffer outside the VM heap,
-                                        // keeping your app from crashing during heavy image manipulation.
-                                        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE // Required to be mutable for format copying later
+                                        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                                         decoder.isMutableRequired = true
                                     }
                                 } else {
@@ -179,12 +180,11 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                 }
 
                                 val outBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                                    // If decoded via ImageDecoder, enforce the correct config copy
                                     sourceBitmap.copy(if (addAlpha || bitDepth == 32) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565, true).also {
-                                        sourceBitmap.recycle() // Clean up the mutable original
+                                        sourceBitmap.recycle()
                                     }
                                 } else {
-                                    sourceBitmap // Already decoded with target config via BitmapFactory options
+                                    sourceBitmap
                                 }
 
                                 val quality = if (compression == "max") 100 else 80
@@ -204,6 +204,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                 val destUri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
                                 destUri?.let {
                                     context.contentResolver.openOutputStream(it)?.use { out -> out.write(pngData) }
+                                    outputUri = it // Capture the secure MediaStore URI for Phase 2 actions
                                 }
 
                                 withContext(Dispatchers.Main) {
@@ -214,9 +215,28 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                         @Suppress("DEPRECATION")
                                         vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
                                     }
-                                    snackbarHostState.showSnackbar("Saved to Pictures/FileEase!")
-                                    delay(2000)
-                                    isComplete = false
+
+                                    // Phase 2: The "Clean Up" Hook
+                                    coroutineScope.launch {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = "Exported! Delete original JPG to free up ${loadedImage!!.sizeMb}?",
+                                            actionLabel = "Delete",
+                                            duration = SnackbarDuration.Long
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            try {
+                                                // Natively request deletion of the original file
+                                                context.contentResolver.delete(loadedImage!!.uri, null, null)
+                                                snackbarHostState.showSnackbar("Original JPG deleted successfully.")
+                                                loadedImage = null
+                                                isComplete = false
+                                                outputUri = null
+                                            } catch (e: SecurityException) {
+                                                // Handle Android 10+ scoped storage protection gracefully
+                                                snackbarHostState.showSnackbar("Permission denied by Android Scoped Storage.")
+                                            }
+                                        }
+                                    }
                                 }
                             } catch (e: Exception) {
                                 withContext(Dispatchers.Main) { snackbarHostState.showSnackbar("Failed: ${e.message}") }
@@ -227,6 +247,32 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                     } else if (loadedImage == null) {
                         imagePickerLauncher.launch("image/jpeg")
                     }
+                },
+                // Phase 2: Secure Intent Routing Callbacks
+                onShare = {
+                    outputUri?.let { uri ->
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "image/png"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(intent, "Share optimized PNG"))
+                    }
+                },
+                onOpen = {
+                    outputUri?.let { uri ->
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, "image/png")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(intent, "Open PNG"))
+                    }
+                },
+                onReset = {
+                    loadedImage = null
+                    isComplete = false
+                    outputUri = null
+                    imagePickerLauncher.launch("image/jpeg")
                 }
             )
         },
@@ -284,7 +330,6 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                 if (loadedImage != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(modifier = Modifier.size(80.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainer)) {
-                            // Phase 1: Removed direct Bitmap referencing. Coil handles async loading cleanly.
                             AsyncImage(
                                 model = loadedImage!!.uri,
                                 contentDescription = null,
@@ -642,9 +687,18 @@ private fun CustomSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     }
 }
 
+// Phase 2: Dynamic Action Bar implementation
 @Composable
-private fun JpgToPngBottomBar(isProcessing: Boolean, isComplete: Boolean, isEnabled: Boolean, onConvert: () -> Unit) {
-    val buttonColor = if (isComplete) Secondary else PrimaryContainer
+private fun JpgToPngBottomBar(
+    isProcessing: Boolean,
+    isComplete: Boolean,
+    isEnabled: Boolean,
+    onConvert: () -> Unit,
+    onShare: () -> Unit,
+    onOpen: () -> Unit,
+    onReset: () -> Unit
+) {
+    val buttonColor = PrimaryContainer
     val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 12.dp, label = "buttonShape")
 
     Column(
@@ -655,41 +709,76 @@ private fun JpgToPngBottomBar(isProcessing: Boolean, isComplete: Boolean, isEnab
             .navigationBarsPadding()
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.9f)
-                    .height(48.dp)
-                    .shadow(if (isEnabled && !isProcessing && !isComplete) 4.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.5f))
-                    .clip(RoundedCornerShape(cornerRadius))
-                    .background(if (!isEnabled) SurfaceContainerHigh else buttonColor)
-                    .clickable(enabled = isEnabled && !isProcessing && !isComplete) { onConvert() },
-                contentAlignment = Alignment.Center
-            ) {
-                AnimatedContent(targetState = Pair(isProcessing, isComplete), label = "btn") { state ->
-                    val (processing, complete) = state
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (processing) {
-                            CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Processing PNG...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
-                        } else if (complete) {
-                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Exported Successfully!", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
-                        } else {
-                            Icon(Icons.Outlined.Sync, contentDescription = null, tint = if (isEnabled) OnPrimaryContainer else OutlineVariant, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Convert to PNG & Save", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (isEnabled) OnPrimaryContainer else OutlineVariant)
+
+            AnimatedContent(targetState = isComplete, label = "ActionBarTransition") { complete ->
+                if (complete) {
+                    // Phase 2: Contextual Post-Conversion Actions Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        PostActionItem(icon = Icons.Outlined.Share, label = "Share File", onClick = onShare)
+                        PostActionItem(icon = Icons.Outlined.OpenInNew, label = "Open File", onClick = onOpen)
+                        PostActionItem(icon = Icons.Outlined.RestartAlt, label = "Convert New", onClick = onReset)
+                    }
+                } else {
+                    // Original Convert Button
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.9f)
+                            .height(48.dp)
+                            .shadow(if (isEnabled && !isProcessing) 4.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.5f))
+                            .clip(RoundedCornerShape(cornerRadius))
+                            .background(if (!isEnabled) SurfaceContainerHigh else buttonColor)
+                            .clickable(enabled = isEnabled && !isProcessing) { onConvert() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (isProcessing) {
+                                CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Processing PNG...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                            } else {
+                                Icon(Icons.Outlined.Sync, contentDescription = null, tint = if (isEnabled) OnPrimaryContainer else OutlineVariant, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Convert to PNG & Save", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (isEnabled) OnPrimaryContainer else OutlineVariant)
+                            }
                         }
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(6.dp))
+
+            Spacer(modifier = Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(SecondaryContainer))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("~0.2s local runtime • Instant download", fontSize = 10.sp, color = OnSurfaceVariant)
+                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(if (isComplete) Primary else SecondaryContainer))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (isComplete) "File saved securely to native gallery" else "~0.2s local runtime • Instant download",
+                    fontSize = 10.sp, color = OnSurfaceVariant
+                )
             }
         }
+    }
+}
+
+// Sub-composable for Phase 2 Action Buttons
+@Composable
+private fun PostActionItem(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onClick() }
+            .padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier.size(44.dp).clip(CircleShape).background(SurfaceContainerLow),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = label, tint = Primary, modifier = Modifier.size(20.dp))
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
     }
 }
