@@ -605,30 +605,16 @@ private fun JpgToPngTopBar(onNavigateBack: () -> Unit) {
             .background(Surface.copy(alpha = 0.90f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
             .padding(horizontal = 16.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(
-                modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Column {
-                Text("JPG to PNG", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
-            }
+        Box(
+            modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(44.dp).clip(CircleShape).clickable { }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Info, contentDescription = "Info", tint = OnSurfaceVariant, modifier = Modifier.size(22.dp))
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(Primary).shadow(1.dp), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Person, contentDescription = "User", tint = OnPrimary, modifier = Modifier.size(18.dp))
-            }
-        }
+        Spacer(modifier = Modifier.width(4.dp))
+        Text("JPG to PNG", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
     }
 }
 
