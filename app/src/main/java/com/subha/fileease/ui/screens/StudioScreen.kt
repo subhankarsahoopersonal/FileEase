@@ -32,7 +32,8 @@ private val Primary = Color(0xFF0050CB)
 @Composable
 fun StudioScreen(
     onImagesToPdfClick: () -> Unit = {},
-    onPdfToImagesClick: () -> Unit = {} // <-- INJECTED ROUTE TRIGGER
+    onPdfToImagesClick: () -> Unit = {},
+    onJpgToPngClick: () -> Unit = {} // <-- INJECTED ROUTE TRIGGER
 ) {
     Scaffold(
         containerColor = Surface,
@@ -79,7 +80,7 @@ fun StudioScreen(
                     modifier = Modifier.weight(1f),
                     title = "PDF to Images",
                     icon = Icons.Outlined.CollectionsBookmark,
-                    onClick = onPdfToImagesClick // <-- CONNECTED TO CARD
+                    onClick = onPdfToImagesClick
                 )
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -88,7 +89,7 @@ fun StudioScreen(
                     modifier = Modifier.weight(1f),
                     title = "JPG to PNG",
                     icon = Icons.Outlined.SwapHoriz,
-                    onClick = { /* Not yet implemented */ }
+                    onClick = onJpgToPngClick // <-- CONNECTED TO CARD
                 )
                 StudioToolCard(
                     modifier = Modifier.weight(1f),
