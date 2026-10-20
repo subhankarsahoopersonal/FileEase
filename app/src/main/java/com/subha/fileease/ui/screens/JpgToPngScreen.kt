@@ -60,10 +60,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
-import java.io.InputStream
-import java.io.OutputStream
 
 // Exact Tailwind Color Tokens from Mockup
 private val Background = Color(0xFFFAF8FF)
@@ -84,7 +80,6 @@ private val SecondaryContainer = Color(0xFF2170E4)
 private val Tertiary = Color(0xFF4E5A69)
 private val Outline = Color(0xFF727687)
 private val OutlineVariant = Color(0xFFC2C6D8)
-// FIX: Added the missing Error tokens to fix the build failure
 private val Error = Color(0xFFBA1A1A)
 private val ErrorContainer = Color(0xFFFFDAD6)
 
@@ -110,7 +105,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
     var isComplete by remember { mutableStateOf(false) }
     var outputUri by remember { mutableStateOf<Uri?>(null) }
 
-    // Phase 3: Cancellation State
+    // Cancellation State
     var conversionJob by remember { mutableStateOf<Job?>(null) }
     var isCancelling by remember { mutableStateOf(false) }
 
@@ -175,27 +170,42 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                     if (loadedImage != null && !isProcessing) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
 
+                        // Phase 4: Storage Quota Verification
+                        val usableSpaceMb = Environment.getDataDirectory().usableSpace / (1024 * 1024)
+                        if (usableSpaceMb < 15) { // Require at least 15MB buffer for raw bitmap mapping
+                            coroutineScope.launch {
+                                snackbarHostState.showSnackbar("Not enough storage space. Please free up at least 15MB to convert this file.")
+                            }
+                            return@JpgToPngBottomBar
+                        }
+
                         conversionJob = coroutineScope.launch(Dispatchers.IO) {
                             isProcessing = true
                             isCancelling = false
                             var pendingDestUri: Uri? = null
 
                             try {
-                                val sourceBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                                    val source = ImageDecoder.createSource(context.contentResolver, loadedImage!!.uri)
-                                    ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
-                                        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                                        decoder.isMutableRequired = true
+                                // Phase 4: Color Space Edge Case Catching
+                                val sourceBitmap = runCatching {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                        val source = ImageDecoder.createSource(context.contentResolver, loadedImage!!.uri)
+                                        ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
+                                            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                                            decoder.isMutableRequired = true
+                                        }
+                                    } else {
+                                        val options = android.graphics.BitmapFactory.Options()
+                                        options.inPreferredConfig = if (addAlpha || bitDepth == 32) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565
+                                        context.contentResolver.openInputStream(loadedImage!!.uri)?.use {
+                                            android.graphics.BitmapFactory.decodeStream(it, null, options)
+                                        } ?: throw Exception("Failed to open stream")
                                     }
-                                } else {
-                                    val options = android.graphics.BitmapFactory.Options()
-                                    options.inPreferredConfig = if (addAlpha || bitDepth == 32) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565
-                                    context.contentResolver.openInputStream(loadedImage!!.uri)?.use {
-                                        android.graphics.BitmapFactory.decodeStream(it, null, options)
-                                    } ?: throw Exception("Failed to open stream")
+                                }.getOrElse { error ->
+                                    if (error is IllegalArgumentException) {
+                                        throw Exception("Unsupported color profile. Please use an RGB image.")
+                                    } else throw error
                                 }
 
-                                // Phase 3: Check cancellation before heavy allocation
                                 if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled by user")
 
                                 val outBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -220,13 +230,11 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                 pendingDestUri = destUri
 
                                 destUri?.let { uri ->
-                                    // Phase 3: Deterministic Streaming instead of ByteArray in-memory caching
                                     context.contentResolver.openOutputStream(uri)?.use { out ->
                                         if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled by user")
                                         outBitmap.compress(Bitmap.CompressFormat.PNG, quality, out)
                                     }
 
-                                    // Phase 3: Explicit MediaScanner trigger
                                     val filePath = getFilePathFromUri(uri)
                                     if (filePath != null) {
                                         MediaScannerConnection.scanFile(context, arrayOf(filePath), arrayOf("image/png"), null)
@@ -264,12 +272,11 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                     }
                                 }
                             } catch (e: kotlinx.coroutines.CancellationException) {
-                                // Phase 3: Ghost file cleanup on Cancel
                                 pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
                                 withContext(Dispatchers.Main) { snackbarHostState.showSnackbar("Conversion cancelled.") }
                             } catch (e: Exception) {
                                 pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
-                                withContext(Dispatchers.Main) { snackbarHostState.showSnackbar("Failed: ${e.message}") }
+                                withContext(Dispatchers.Main) { snackbarHostState.showSnackbar(e.message ?: "An unknown error occurred.") }
                             } finally {
                                 withContext(Dispatchers.Main) {
                                     isProcessing = false
@@ -281,7 +288,6 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                         imagePickerLauncher.launch("image/jpeg")
                     }
                 },
-                // Phase 3: Cancellation callback
                 onCancel = {
                     if (isProcessing) {
                         isCancelling = true
@@ -745,7 +751,6 @@ private fun CustomSwitch(checked: Boolean, isEnabled: Boolean, onCheckedChange: 
     }
 }
 
-// Phase 3: Added Cancel Action support to dynamic bottom bar
 @Composable
 private fun JpgToPngBottomBar(
     isProcessing: Boolean,
