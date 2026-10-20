@@ -18,12 +18,6 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -49,7 +43,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -60,10 +53,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
-import java.io.InputStream
-import java.io.OutputStream
 
 // Exact Tailwind Color Tokens from Mockup
 private val Background = Color(0xFFFAF8FF)
@@ -236,7 +225,6 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
 
                                 val values = ContentValues().apply {
                                     put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-                                    // Hardcoded to strictly support PNG only
                                     put(MediaStore.Images.Media.MIME_TYPE, "image/png")
                                     put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FileEase")
                                 }
@@ -247,13 +235,11 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                 destUri?.let { uri ->
                                     context.contentResolver.openOutputStream(uri)?.use { out ->
                                         if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled by user")
-                                        // Hardcoded to strictly support PNG only
                                         outBitmap.compress(Bitmap.CompressFormat.PNG, quality, out)
                                     }
 
                                     val filePath = getFilePathFromUri(uri)
                                     if (filePath != null) {
-                                        // Hardcoded to strictly support PNG only
                                         MediaScannerConnection.scanFile(context, arrayOf(filePath), arrayOf("image/png"), null)
                                     }
                                     outputUri = uri
@@ -347,15 +333,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
         ) {
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "Convert image formats with transparency & lossless compression.",
-                fontSize = 13.sp,
-                color = OnSurfaceVariant,
-                lineHeight = 20.sp,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Active Source Image Card
             Column(
@@ -621,12 +599,6 @@ private fun getFilePathFromUri(uri: Uri): String? {
 
 @Composable
 private fun JpgToPngTopBar(onNavigateBack: () -> Unit) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val alphaPulse by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 0.3f,
-        animationSpec = infiniteRepeatable(tween(800, easing = FastOutLinearInEasing), RepeatMode.Reverse), label = "alphaPulse"
-    )
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -645,12 +617,7 @@ private fun JpgToPngTopBar(onNavigateBack: () -> Unit) {
             }
             Spacer(modifier = Modifier.width(4.dp))
             Column {
-                Text("JPG To PNG", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerHigh.copy(alpha=0.6f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(PrimaryContainer).alpha(alphaPulse))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Offline Engine Active • 100% On-device", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = OnSurfaceVariant)
-                }
+                Text("JPG to PNG", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
