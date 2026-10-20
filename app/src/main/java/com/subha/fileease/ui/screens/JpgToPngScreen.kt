@@ -60,6 +60,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 
 // Exact Tailwind Color Tokens from Mockup
 private val Background = Color(0xFFFAF8FF)
@@ -87,7 +91,7 @@ data class LoadedJpg(
     val uri: Uri,
     val name: String,
     val dimensions: String,
-    val sizeMb: String,
+    val sizeMb: Double,
     val sizeBytes: Long
 )
 
@@ -110,7 +114,6 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
     var isCancelling by remember { mutableStateOf(false) }
 
     // UI State
-    var selectedFormat by remember { mutableStateOf("PNG") }
     var addAlpha by remember { mutableStateOf(true) }
     var removeBg by remember { mutableStateOf(false) }
     var bitDepth by remember { mutableStateOf(32) }
@@ -144,7 +147,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                         "${options.outWidth} × ${options.outHeight}"
                     }
 
-                    val sizeMb = "%.1f MB".format(sizeBytes / (1024.0 * 1024.0))
+                    val sizeMb = sizeBytes / (1024.0 * 1024.0)
 
                     withContext(Dispatchers.Main) {
                         loadedImage = LoadedJpg(uri, name, dims, sizeMb, sizeBytes)
@@ -170,9 +173,8 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                     if (loadedImage != null && !isProcessing) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
 
-                        // Phase 4: Storage Quota Verification
                         val usableSpaceMb = Environment.getDataDirectory().usableSpace / (1024 * 1024)
-                        if (usableSpaceMb < 15) { // Require at least 15MB buffer for raw bitmap mapping
+                        if (usableSpaceMb < 15) {
                             coroutineScope.launch {
                                 snackbarHostState.showSnackbar("Not enough storage space. Please free up at least 15MB to convert this file.")
                             }
@@ -185,7 +187,6 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                             var pendingDestUri: Uri? = null
 
                             try {
-                                // Phase 4: Color Space Edge Case Catching
                                 val sourceBitmap = runCatching {
                                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                                         val source = ImageDecoder.createSource(context.contentResolver, loadedImage!!.uri)
@@ -216,12 +217,26 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                     sourceBitmap
                                 }
 
+                                if (removeBg && (addAlpha || bitDepth == 32)) {
+                                    val width = outBitmap.width
+                                    val height = outBitmap.height
+                                    val pixels = IntArray(width * height)
+                                    outBitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+                                    for (i in pixels.indices) {
+                                        if (pixels[i] == android.graphics.Color.WHITE) {
+                                            pixels[i] = android.graphics.Color.TRANSPARENT
+                                        }
+                                    }
+                                    outBitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+                                }
+
                                 val quality = if (compression == "max") 100 else 80
                                 val baseName = loadedImage!!.name.substringBeforeLast(".")
                                 val fileName = "${baseName}_converted.png"
 
                                 val values = ContentValues().apply {
                                     put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                                    // Hardcoded to strictly support PNG only
                                     put(MediaStore.Images.Media.MIME_TYPE, "image/png")
                                     put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FileEase")
                                 }
@@ -232,11 +247,13 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                 destUri?.let { uri ->
                                     context.contentResolver.openOutputStream(uri)?.use { out ->
                                         if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled by user")
+                                        // Hardcoded to strictly support PNG only
                                         outBitmap.compress(Bitmap.CompressFormat.PNG, quality, out)
                                     }
 
                                     val filePath = getFilePathFromUri(uri)
                                     if (filePath != null) {
+                                        // Hardcoded to strictly support PNG only
                                         MediaScannerConnection.scanFile(context, arrayOf(filePath), arrayOf("image/png"), null)
                                     }
                                     outputUri = uri
@@ -254,7 +271,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
 
                                     coroutineScope.launch {
                                         val result = snackbarHostState.showSnackbar(
-                                            message = "Exported! Delete original JPG to free up ${loadedImage!!.sizeMb}?",
+                                            message = "Exported! Delete original JPG to free up ${"%.1f".format(loadedImage!!.sizeMb)} MB?",
                                             actionLabel = "Delete",
                                             duration = SnackbarDuration.Long
                                         )
@@ -390,7 +407,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                         Spacer(modifier = Modifier.width(16.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(loadedImage!!.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${loadedImage!!.dimensions} • ${loadedImage!!.sizeMb} • RGB", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+                            Text("${loadedImage!!.dimensions} • ${"%.1f MB".format(loadedImage!!.sizeMb)} • RGB", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
 
                             Row(modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -411,33 +428,6 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                     Box(modifier = Modifier.fillMaxWidth().height(80.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).clickable { imagePickerLauncher.launch("image/jpeg") }, contentAlignment = Alignment.Center) {
                         Text("Tap to select a JPG file", fontSize = 13.sp, color = Outline)
                     }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Target Output Format Selector
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Target Output Format", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                Text("SELECT ONE", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary, letterSpacing = 0.5.sp)
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FormatCard(modifier = Modifier.weight(1f), title = "PNG", subtitle = "Lossless • Transparent", icon = Icons.Outlined.PhotoLibrary, tag = "Recommended", isSelected = selectedFormat == "PNG") {
-                    if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "PNG" }
-                }
-                FormatCard(modifier = Modifier.weight(1f), title = "WEBP", subtitle = "Modern • Web Ready", icon = Icons.Outlined.Speed, tag = "Compact", isSelected = selectedFormat == "WEBP") {
-                    if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "WEBP" }
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FormatCard(modifier = Modifier.weight(1f), title = "SVG", subtitle = "Vector Contour Trace", icon = Icons.Outlined.Gesture, tag = "Trace", isSelected = selectedFormat == "SVG") {
-                    if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "SVG" }
-                }
-                FormatCard(modifier = Modifier.weight(1f), title = "BMP", subtitle = "Uncompressed Raw", icon = Icons.Outlined.Layers, tag = "Bitmap", isSelected = selectedFormat == "BMP") {
-                    if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "BMP" }
                 }
             }
 
@@ -468,7 +458,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                 Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                         Text("Auto-detect Solid Background", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                        Text("Remove uniform white or color edges", fontSize = 12.sp, color = OnSurfaceVariant)
+                        Text("Removes pure white background natively", fontSize = 12.sp, color = OnSurfaceVariant)
                     }
                     CustomSwitch(checked = removeBg, isEnabled = !isProcessing, onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); removeBg = it })
                 }
@@ -508,12 +498,12 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Deflate Compression", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
                         }
-                        Text("100% Lossless", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                        Text("Lossless Processing", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         BitCompCard(modifier = Modifier.weight(1f), title = "Maximum", subtitle = "Smallest File Size", isSelected = compression == "max") { if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); compression = "max" } }
-                        BitCompCard(modifier = Modifier.weight(1f), title = "Fast Lossless", subtitle = "Instant Export", isSelected = compression == "fast") { if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); compression = "fast" } }
+                        BitCompCard(modifier = Modifier.weight(1f), title = "Fast Processing", subtitle = "Instant Export", isSelected = compression == "fast") { if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); compression = "fast" } }
                     }
                 }
             }
@@ -521,13 +511,16 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
 
             // Dynamic Estimate Hero Card
+            val formatMultiplier = 0.90
+            val compressionFactor = if (compression == "max") 0.85 else 1.0
+
             val estSize = if (loadedImage != null) {
-                val factor = if (compression == "max") 0.75 else 0.90
-                "%.1f MB".format((loadedImage!!.sizeBytes / (1024.0 * 1024.0)) * factor)
+                "%.1f MB".format(loadedImage!!.sizeMb * formatMultiplier * compressionFactor)
             } else "~0.0 MB"
-            val origSize = if (loadedImage != null) "%.1f MB".format(loadedImage!!.sizeBytes / (1024.0 * 1024.0)) else "0.0 MB"
-            val savingPercent = if (compression == "max") "-25%" else "-10%"
-            val progressWidth by animateFloatAsState(targetValue = if (compression == "max") 0.75f else 0.90f, label = "savings")
+            val origSize = if (loadedImage != null) "%.1f MB".format(loadedImage!!.sizeMb) else "0.0 MB"
+
+            val savingPercent = if (compression == "max") "-15%" else "-5%"
+            val progressWidth by animateFloatAsState(targetValue = (formatMultiplier * compressionFactor).toFloat(), label = "savings")
 
             Box(
                 modifier = Modifier
@@ -560,7 +553,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("$origSize JPG", fontSize = 12.sp, color = OnPrimary.copy(alpha = 0.8f), textDecoration = TextDecoration.LineThrough, modifier = Modifier.padding(bottom = 4.dp))
                             }
-                            Text("$origSize JPG → $estSize PNG (Lossless deflate)", fontSize = 12.sp, color = OnPrimary.copy(alpha = 0.9f), modifier = Modifier.padding(top = 4.dp))
+                            Text("$origSize JPG → $estSize PNG", fontSize = 12.sp, color = OnPrimary.copy(alpha = 0.9f), modifier = Modifier.padding(top = 4.dp))
                         }
                         Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(SurfaceContainerLowest.copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
                             Icon(Icons.Outlined.TrendingDown, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(24.dp))
@@ -571,7 +564,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
 
                     Column {
                         Box(modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)).background(SurfaceContainerLowest.copy(alpha = 0.25f))) {
-                            Box(modifier = Modifier.fillMaxWidth(progressWidth).fillMaxHeight().clip(RoundedCornerShape(50)).background(SurfaceContainerLowest))
+                            Box(modifier = Modifier.fillMaxWidth(progressWidth.coerceIn(0.1f, 1f)).fillMaxHeight().clip(RoundedCornerShape(50)).background(SurfaceContainerLowest))
                         }
                         Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Optimized Output", fontSize = 11.sp, color = OnPrimary.copy(alpha = 0.85f))
@@ -669,42 +662,6 @@ private fun JpgToPngTopBar(onNavigateBack: () -> Unit) {
                 Icon(Icons.Outlined.Person, contentDescription = "User", tint = OnPrimary, modifier = Modifier.size(18.dp))
             }
         }
-    }
-}
-
-@Composable
-private fun FormatCard(
-    modifier: Modifier,
-    title: String,
-    subtitle: String,
-    icon: ImageVector,
-    tag: String,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    val bgColor = if (isSelected) PrimaryContainer else SurfaceContainerLowest
-    val contentColor = if (isSelected) OnPrimaryContainer else OnSurface
-    val subColor = if (isSelected) OnPrimaryContainer.copy(alpha = 0.9f) else OnSurfaceVariant
-    val iconBgColor = if (isSelected) SurfaceContainerLowest.copy(alpha = 0.2f) else SurfaceContainer
-    val iconColor = if (isSelected) OnPrimaryContainer else Tertiary
-
-    Column(
-        modifier = modifier
-            .shadow(1.dp, RoundedCornerShape(12.dp))
-            .background(bgColor, RoundedCornerShape(12.dp))
-            .clickable { onClick() }
-            .padding(12.dp)
-    ) {
-        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(iconBgColor), contentAlignment = Alignment.Center) {
-                Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(20.dp))
-            }
-            Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(if(isSelected) SurfaceContainerLowest.copy(alpha = 0.25f) else Color.Transparent).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                Text(tag, fontSize = 10.sp, fontWeight = if(isSelected) FontWeight.Bold else FontWeight.Normal, color = if(isSelected) OnPrimaryContainer else OnSurfaceVariant)
-            }
-        }
-        Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = contentColor)
-        Text(subtitle, fontSize = 10.sp, color = subColor, modifier = Modifier.padding(top = 2.dp))
     }
 }
 
