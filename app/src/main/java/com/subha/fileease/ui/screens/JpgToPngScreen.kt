@@ -2,7 +2,7 @@ package com.subha.fileease.ui.screens
 
 import android.content.ContentValues
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -77,7 +77,6 @@ private val Secondary = Color(0xFF0058BE)
 private val SecondaryContainer = Color(0xFF2170E4)
 private val Tertiary = Color(0xFF4E5A69)
 private val Outline = Color(0xFF727687)
-// FIX: Added the missing OutlineVariant token
 private val OutlineVariant = Color(0xFFC2C6D8)
 
 data class LoadedJpg(
@@ -85,8 +84,7 @@ data class LoadedJpg(
     val name: String,
     val dimensions: String,
     val sizeMb: String,
-    val sizeBytes: Long,
-    val bitmap: Bitmap
+    val sizeBytes: Long
 )
 
 @Composable
@@ -109,7 +107,6 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
     var bitDepth by remember { mutableStateOf(32) }
     var compression by remember { mutableStateOf("max") }
 
-    // Hardwired to ONLY accept JPEG images as requested
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
@@ -128,17 +125,21 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                 }
 
                 try {
-                    context.contentResolver.openInputStream(uri)?.use { stream ->
-                        val options = BitmapFactory.Options()
-                        options.inPreferredConfig = Bitmap.Config.ARGB_8888
-                        val bitmap = BitmapFactory.decodeStream(stream, null, options)
-                        if (bitmap != null) {
-                            val dims = "${bitmap.width} × ${bitmap.height}"
-                            val sizeMb = "%.1f MB".format(sizeBytes / (1024.0 * 1024.0))
-                            withContext(Dispatchers.Main) {
-                                loadedImage = LoadedJpg(uri, name, dims, sizeMb, sizeBytes, bitmap)
-                            }
-                        }
+                    // Modern ImageDecoder implementation for safer metadata extraction
+                    val dims = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        val source = ImageDecoder.createSource(context.contentResolver, uri)
+                        val info = ImageDecoder.decodeDrawable(source).intrinsicWidth to ImageDecoder.decodeDrawable(source).intrinsicHeight
+                        "${info.first} × ${info.second}"
+                    } else {
+                        val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, options) }
+                        "${options.outWidth} × ${options.outHeight}"
+                    }
+
+                    val sizeMb = "%.1f MB".format(sizeBytes / (1024.0 * 1024.0))
+
+                    withContext(Dispatchers.Main) {
+                        loadedImage = LoadedJpg(uri, name, dims, sizeMb, sizeBytes)
                     }
                 } catch (e: Exception) { e.printStackTrace() }
             }
@@ -160,11 +161,30 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                         coroutineScope.launch(Dispatchers.IO) {
                             isProcessing = true
                             try {
-                                val sourceBitmap = loadedImage!!.bitmap
-                                val outBitmap = if (addAlpha || bitDepth == 32) {
-                                    sourceBitmap.copy(Bitmap.Config.ARGB_8888, true)
+                                // Phase 1: Memory-Safe Decoding
+                                val sourceBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                    val source = ImageDecoder.createSource(context.contentResolver, loadedImage!!.uri)
+                                    ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
+                                        // Hardware allocation configures the memory buffer outside the VM heap,
+                                        // keeping your app from crashing during heavy image manipulation.
+                                        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE // Required to be mutable for format copying later
+                                        decoder.isMutableRequired = true
+                                    }
                                 } else {
-                                    sourceBitmap.copy(Bitmap.Config.RGB_565, true)
+                                    val options = android.graphics.BitmapFactory.Options()
+                                    options.inPreferredConfig = if (addAlpha || bitDepth == 32) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565
+                                    context.contentResolver.openInputStream(loadedImage!!.uri)?.use {
+                                        android.graphics.BitmapFactory.decodeStream(it, null, options)
+                                    } ?: throw Exception("Failed to open stream")
+                                }
+
+                                val outBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                    // If decoded via ImageDecoder, enforce the correct config copy
+                                    sourceBitmap.copy(if (addAlpha || bitDepth == 32) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565, true).also {
+                                        sourceBitmap.recycle() // Clean up the mutable original
+                                    }
+                                } else {
+                                    sourceBitmap // Already decoded with target config via BitmapFactory options
                                 }
 
                                 val quality = if (compression == "max") 100 else 80
@@ -264,6 +284,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                 if (loadedImage != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(modifier = Modifier.size(80.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainer)) {
+                            // Phase 1: Removed direct Bitmap referencing. Coil handles async loading cleanly.
                             AsyncImage(
                                 model = loadedImage!!.uri,
                                 contentDescription = null,
@@ -428,7 +449,6 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                     )
                     .padding(16.dp)
             ) {
-                // Blurred orb
                 Box(modifier = Modifier.align(Alignment.BottomEnd).offset(x = 32.dp, y = 32.dp).size(128.dp).clip(CircleShape).background(SurfaceContainerLowest.copy(alpha = 0.1f)))
 
                 Column {
