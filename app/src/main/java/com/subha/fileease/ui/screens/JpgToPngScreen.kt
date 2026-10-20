@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -55,9 +56,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 
 // Exact Tailwind Color Tokens from Mockup
 private val Background = Color(0xFFFAF8FF)
@@ -78,6 +84,9 @@ private val SecondaryContainer = Color(0xFF2170E4)
 private val Tertiary = Color(0xFF4E5A69)
 private val Outline = Color(0xFF727687)
 private val OutlineVariant = Color(0xFFC2C6D8)
+// FIX: Added the missing Error tokens to fix the build failure
+private val Error = Color(0xFFBA1A1A)
+private val ErrorContainer = Color(0xFFFFDAD6)
 
 data class LoadedJpg(
     val uri: Uri,
@@ -100,6 +109,10 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
     var outputUri by remember { mutableStateOf<Uri?>(null) }
+
+    // Phase 3: Cancellation State
+    var conversionJob by remember { mutableStateOf<Job?>(null) }
+    var isCancelling by remember { mutableStateOf(false) }
 
     // UI State
     var selectedFormat by remember { mutableStateOf("PNG") }
@@ -126,7 +139,6 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                 }
 
                 try {
-                    // Modern ImageDecoder implementation for safer metadata extraction
                     val dims = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                         val source = ImageDecoder.createSource(context.contentResolver, uri)
                         val info = ImageDecoder.decodeDrawable(source).intrinsicWidth to ImageDecoder.decodeDrawable(source).intrinsicHeight
@@ -156,15 +168,19 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
         bottomBar = {
             JpgToPngBottomBar(
                 isProcessing = isProcessing,
+                isCancelling = isCancelling,
                 isComplete = isComplete,
                 isEnabled = loadedImage != null,
                 onConvert = {
                     if (loadedImage != null && !isProcessing) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        coroutineScope.launch(Dispatchers.IO) {
+
+                        conversionJob = coroutineScope.launch(Dispatchers.IO) {
                             isProcessing = true
+                            isCancelling = false
+                            var pendingDestUri: Uri? = null
+
                             try {
-                                // Phase 1: Memory-Safe Decoding
                                 val sourceBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                                     val source = ImageDecoder.createSource(context.contentResolver, loadedImage!!.uri)
                                     ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
@@ -179,6 +195,9 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                     } ?: throw Exception("Failed to open stream")
                                 }
 
+                                // Phase 3: Check cancellation before heavy allocation
+                                if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled by user")
+
                                 val outBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                                     sourceBitmap.copy(if (addAlpha || bitDepth == 32) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565, true).also {
                                         sourceBitmap.recycle()
@@ -188,11 +207,6 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                 }
 
                                 val quality = if (compression == "max") 100 else 80
-                                val bos = ByteArrayOutputStream()
-                                outBitmap.compress(Bitmap.CompressFormat.PNG, quality, bos)
-                                val pngData = bos.toByteArray()
-                                outBitmap.recycle()
-
                                 val baseName = loadedImage!!.name.substringBeforeLast(".")
                                 val fileName = "${baseName}_converted.png"
 
@@ -201,11 +215,25 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                     put(MediaStore.Images.Media.MIME_TYPE, "image/png")
                                     put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FileEase")
                                 }
+
                                 val destUri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                                destUri?.let {
-                                    context.contentResolver.openOutputStream(it)?.use { out -> out.write(pngData) }
-                                    outputUri = it // Capture the secure MediaStore URI for Phase 2 actions
+                                pendingDestUri = destUri
+
+                                destUri?.let { uri ->
+                                    // Phase 3: Deterministic Streaming instead of ByteArray in-memory caching
+                                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                                        if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled by user")
+                                        outBitmap.compress(Bitmap.CompressFormat.PNG, quality, out)
+                                    }
+
+                                    // Phase 3: Explicit MediaScanner trigger
+                                    val filePath = getFilePathFromUri(uri)
+                                    if (filePath != null) {
+                                        MediaScannerConnection.scanFile(context, arrayOf(filePath), arrayOf("image/png"), null)
+                                    }
+                                    outputUri = uri
                                 }
+                                outBitmap.recycle()
 
                                 withContext(Dispatchers.Main) {
                                     isComplete = true
@@ -216,7 +244,6 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                         vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
                                     }
 
-                                    // Phase 2: The "Clean Up" Hook
                                     coroutineScope.launch {
                                         val result = snackbarHostState.showSnackbar(
                                             message = "Exported! Delete original JPG to free up ${loadedImage!!.sizeMb}?",
@@ -225,30 +252,42 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                                         )
                                         if (result == SnackbarResult.ActionPerformed) {
                                             try {
-                                                // Natively request deletion of the original file
                                                 context.contentResolver.delete(loadedImage!!.uri, null, null)
                                                 snackbarHostState.showSnackbar("Original JPG deleted successfully.")
                                                 loadedImage = null
                                                 isComplete = false
                                                 outputUri = null
                                             } catch (e: SecurityException) {
-                                                // Handle Android 10+ scoped storage protection gracefully
                                                 snackbarHostState.showSnackbar("Permission denied by Android Scoped Storage.")
                                             }
                                         }
                                     }
                                 }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                // Phase 3: Ghost file cleanup on Cancel
+                                pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
+                                withContext(Dispatchers.Main) { snackbarHostState.showSnackbar("Conversion cancelled.") }
                             } catch (e: Exception) {
+                                pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
                                 withContext(Dispatchers.Main) { snackbarHostState.showSnackbar("Failed: ${e.message}") }
                             } finally {
-                                withContext(Dispatchers.Main) { isProcessing = false }
+                                withContext(Dispatchers.Main) {
+                                    isProcessing = false
+                                    isCancelling = false
+                                }
                             }
                         }
                     } else if (loadedImage == null) {
                         imagePickerLauncher.launch("image/jpeg")
                     }
                 },
-                // Phase 2: Secure Intent Routing Callbacks
+                // Phase 3: Cancellation callback
+                onCancel = {
+                    if (isProcessing) {
+                        isCancelling = true
+                        conversionJob?.cancel()
+                    }
+                },
                 onShare = {
                     outputUri?.let { uri ->
                         val intent = Intent(Intent.ACTION_SEND).apply {
@@ -313,10 +352,10 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                         Text(if (loadedImage != null) "Active Source Loaded" else "No Image Loaded", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Primary)
                     }
                     Row(
-                        modifier = Modifier.clickable {
+                        modifier = Modifier.clickable(enabled = !isProcessing) {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             imagePickerLauncher.launch("image/jpeg")
-                        },
+                        }.alpha(if (isProcessing) 0.5f else 1f),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Outlined.SwapHoriz, contentDescription = null, tint = PrimaryContainer, modifier = Modifier.size(16.dp))
@@ -380,19 +419,19 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FormatCard(modifier = Modifier.weight(1f), title = "PNG", subtitle = "Lossless • Transparent", icon = Icons.Outlined.PhotoLibrary, tag = "Recommended", isSelected = selectedFormat == "PNG") {
-                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "PNG"
+                    if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "PNG" }
                 }
                 FormatCard(modifier = Modifier.weight(1f), title = "WEBP", subtitle = "Modern • Web Ready", icon = Icons.Outlined.Speed, tag = "Compact", isSelected = selectedFormat == "WEBP") {
-                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "WEBP"
+                    if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "WEBP" }
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FormatCard(modifier = Modifier.weight(1f), title = "SVG", subtitle = "Vector Contour Trace", icon = Icons.Outlined.Gesture, tag = "Trace", isSelected = selectedFormat == "SVG") {
-                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "SVG"
+                    if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "SVG" }
                 }
                 FormatCard(modifier = Modifier.weight(1f), title = "BMP", subtitle = "Uncompressed Raw", icon = Icons.Outlined.Layers, tag = "Bitmap", isSelected = selectedFormat == "BMP") {
-                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "BMP"
+                    if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedFormat = "BMP" }
                 }
             }
 
@@ -417,7 +456,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                         Text("Add Alpha Transparency Channel", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
                         Text("Instantiates 8-bit RGBA mask channel", fontSize = 12.sp, color = OnSurfaceVariant)
                     }
-                    CustomSwitch(checked = addAlpha, onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); addAlpha = it })
+                    CustomSwitch(checked = addAlpha, isEnabled = !isProcessing, onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); addAlpha = it })
                 }
                 Box(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).height(1.dp).background(SurfaceContainer))
                 Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -425,7 +464,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                         Text("Auto-detect Solid Background", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
                         Text("Remove uniform white or color edges", fontSize = 12.sp, color = OnSurfaceVariant)
                     }
-                    CustomSwitch(checked = removeBg, onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); removeBg = it })
+                    CustomSwitch(checked = removeBg, isEnabled = !isProcessing, onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); removeBg = it })
                 }
             }
 
@@ -451,8 +490,8 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        BitCompCard(modifier = Modifier.weight(1f), title = "24-bit TrueColor", subtitle = "RGB Standard", isSelected = bitDepth == 24) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); bitDepth = 24 }
-                        BitCompCard(modifier = Modifier.weight(1f), title = "32-bit (RGBA)", subtitle = "With Alpha Plane", isSelected = bitDepth == 32) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); bitDepth = 32 }
+                        BitCompCard(modifier = Modifier.weight(1f), title = "24-bit TrueColor", subtitle = "RGB Standard", isSelected = bitDepth == 24) { if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); bitDepth = 24 } }
+                        BitCompCard(modifier = Modifier.weight(1f), title = "32-bit (RGBA)", subtitle = "With Alpha Plane", isSelected = bitDepth == 32) { if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); bitDepth = 32 } }
                     }
                 }
 
@@ -467,8 +506,8 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        BitCompCard(modifier = Modifier.weight(1f), title = "Maximum", subtitle = "Smallest File Size", isSelected = compression == "max") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); compression = "max" }
-                        BitCompCard(modifier = Modifier.weight(1f), title = "Fast Lossless", subtitle = "Instant Export", isSelected = compression == "fast") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); compression = "fast" }
+                        BitCompCard(modifier = Modifier.weight(1f), title = "Maximum", subtitle = "Smallest File Size", isSelected = compression == "max") { if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); compression = "max" } }
+                        BitCompCard(modifier = Modifier.weight(1f), title = "Fast Lossless", subtitle = "Instant Export", isSelected = compression == "fast") { if (!isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); compression = "fast" } }
                     }
                 }
             }
@@ -560,6 +599,25 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
             Spacer(modifier = Modifier.height(120.dp))
         }
     }
+}
+
+// Utility to resolve true absolute path from Content Uri to feed the MediaScanner natively
+private fun getFilePathFromUri(uri: Uri): String? {
+    var path: String? = null
+    val pathSegments = uri.pathSegments
+    if (pathSegments != null && pathSegments.size >= 2) {
+        val volumeName = pathSegments[0]
+        val documentId = pathSegments[1]
+        val parts = documentId.split(":")
+        if (parts.size >= 2) {
+            val type = parts[0]
+            val id = parts[1]
+            if ("primary".equals(type, ignoreCase = true)) {
+                path = "${Environment.getExternalStorageDirectory()}/$id"
+            }
+        }
+    }
+    return path
 }
 
 @Composable
@@ -663,7 +721,7 @@ private fun BitCompCard(modifier: Modifier, title: String, subtitle: String, isS
 }
 
 @Composable
-private fun CustomSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun CustomSwitch(checked: Boolean, isEnabled: Boolean, onCheckedChange: (Boolean) -> Unit) {
     val bg by animateColorAsState(if (checked) PrimaryContainer else SurfaceContainerHigh, label = "switchBg")
     val offset by animateDpAsState(if (checked) 20.dp else 0.dp, label = "switchOffset")
 
@@ -672,8 +730,8 @@ private fun CustomSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
             .width(48.dp)
             .height(28.dp)
             .clip(RoundedCornerShape(50))
-            .background(bg)
-            .clickable { onCheckedChange(!checked) }
+            .background(bg.copy(alpha = if (isEnabled) 1f else 0.5f))
+            .clickable(enabled = isEnabled) { onCheckedChange(!checked) }
             .padding(4.dp),
         contentAlignment = Alignment.CenterStart
     ) {
@@ -681,24 +739,27 @@ private fun CustomSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
             modifier = Modifier
                 .offset(x = offset)
                 .size(20.dp)
-                .shadow(1.dp, CircleShape)
+                .shadow(if (isEnabled) 1.dp else 0.dp, CircleShape)
                 .background(SurfaceContainerLowest, CircleShape)
         )
     }
 }
 
-// Phase 2: Dynamic Action Bar implementation
+// Phase 3: Added Cancel Action support to dynamic bottom bar
 @Composable
 private fun JpgToPngBottomBar(
     isProcessing: Boolean,
+    isCancelling: Boolean,
     isComplete: Boolean,
     isEnabled: Boolean,
     onConvert: () -> Unit,
+    onCancel: () -> Unit,
     onShare: () -> Unit,
     onOpen: () -> Unit,
     onReset: () -> Unit
 ) {
-    val buttonColor = PrimaryContainer
+    val buttonColor = if (isCancelling) ErrorContainer else PrimaryContainer
+    val contentColor = if (isCancelling) Error else OnPrimaryContainer
     val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 12.dp, label = "buttonShape")
 
     Column(
@@ -712,7 +773,6 @@ private fun JpgToPngBottomBar(
 
             AnimatedContent(targetState = isComplete, label = "ActionBarTransition") { complete ->
                 if (complete) {
-                    // Phase 2: Contextual Post-Conversion Actions Row
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -723,26 +783,33 @@ private fun JpgToPngBottomBar(
                         PostActionItem(icon = Icons.Outlined.RestartAlt, label = "Convert New", onClick = onReset)
                     }
                 } else {
-                    // Original Convert Button
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(0.9f)
                             .height(48.dp)
-                            .shadow(if (isEnabled && !isProcessing) 4.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.5f))
+                            .shadow(if (isEnabled && !isProcessing) 4.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = buttonColor.copy(alpha = 0.5f))
                             .clip(RoundedCornerShape(cornerRadius))
                             .background(if (!isEnabled) SurfaceContainerHigh else buttonColor)
-                            .clickable(enabled = isEnabled && !isProcessing) { onConvert() },
+                            .clickable(enabled = isEnabled) {
+                                if (isProcessing && !isCancelling) onCancel() else if (!isProcessing) onConvert()
+                            },
                         contentAlignment = Alignment.Center
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (isProcessing) {
-                                CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Processing PNG...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
-                            } else {
-                                Icon(Icons.Outlined.Sync, contentDescription = null, tint = if (isEnabled) OnPrimaryContainer else OutlineVariant, modifier = Modifier.size(20.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Convert to PNG & Save", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (isEnabled) OnPrimaryContainer else OutlineVariant)
+                        AnimatedContent(targetState = Pair(isProcessing, isCancelling), label = "buttonState") { (processing, cancelling) ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (cancelling) {
+                                    Icon(Icons.Outlined.Cancel, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Cancelling...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                                } else if (processing) {
+                                    CircularProgressIndicator(color = contentColor, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Cancel Extraction", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                                } else {
+                                    Icon(Icons.Outlined.Sync, contentDescription = null, tint = if (isEnabled) contentColor else OutlineVariant, modifier = Modifier.size(20.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Convert to PNG & Save", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (isEnabled) contentColor else OutlineVariant)
+                                }
                             }
                         }
                     }
@@ -762,7 +829,6 @@ private fun JpgToPngBottomBar(
     }
 }
 
-// Sub-composable for Phase 2 Action Buttons
 @Composable
 private fun PostActionItem(icon: ImageVector, label: String, onClick: () -> Unit) {
     Column(
