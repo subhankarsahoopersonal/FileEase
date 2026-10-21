@@ -166,7 +166,8 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
                     onImagesToPdfClick = { navController.navigate("images_to_pdf") },
                     onPdfToImagesClick = { navController.navigate("pdf_to_images") },
                     onJpgToPngClick = { navController.navigate("jpg_to_png") },
-                    onTextToPdfClick = { navController.navigate("text_to_pdf") } // <-- INJECTED LAMBDA
+                    onTextToPdfClick = { navController.navigate("text_to_pdf") },
+                    onCropImageClick = { navController.navigate("crop_image") } // <-- INJECTED LAMBDA
                 )
             }
         }
@@ -199,9 +200,12 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
         composable("jpg_to_png") {
             JpgToPngScreen(onNavigateBack = { navController.popBackStack() })
         }
-        // <-- NEW TEXT TO PDF ROUTE ADDED HERE
         composable("text_to_pdf") {
             TextToPdfScreen(onNavigateBack = { navController.popBackStack() })
+        }
+        // <-- NEW CROP IMAGE ROUTE ADDED HERE
+        composable("crop_image") {
+            CropImageScreen(onNavigateBack = { navController.popBackStack() })
         }
     }
 }

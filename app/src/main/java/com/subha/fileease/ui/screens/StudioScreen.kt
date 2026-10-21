@@ -34,7 +34,8 @@ fun StudioScreen(
     onImagesToPdfClick: () -> Unit = {},
     onPdfToImagesClick: () -> Unit = {},
     onJpgToPngClick: () -> Unit = {},
-    onTextToPdfClick: () -> Unit = {} // <-- INJECTED NEW ROUTE TRIGGER
+    onTextToPdfClick: () -> Unit = {},
+    onCropImageClick: () -> Unit = {} // <-- INJECTED NEW ROUTE TRIGGER
 ) {
     Scaffold(
         containerColor = Surface,
@@ -96,7 +97,7 @@ fun StudioScreen(
                     modifier = Modifier.weight(1f),
                     title = "Text to PDF",
                     iconText = "A",
-                    onClick = onTextToPdfClick // <-- CONNECTED TO CARD
+                    onClick = onTextToPdfClick
                 )
             }
 
@@ -111,7 +112,7 @@ fun StudioScreen(
                     modifier = Modifier.weight(1f),
                     title = "Crop Image",
                     icon = Icons.Outlined.Crop,
-                    onClick = { /* Not yet implemented */ }
+                    onClick = onCropImageClick // <-- CONNECTED TO CARD
                 )
                 StudioToolCard(
                     modifier = Modifier.weight(1f),
