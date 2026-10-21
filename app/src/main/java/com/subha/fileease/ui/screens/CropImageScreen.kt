@@ -36,7 +36,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -107,11 +106,20 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
     var imageSizeMb by remember { mutableFloatStateOf(0f) }
     var imageExtension by remember { mutableStateOf("JPG") }
 
-    // Viewport Math State
+    // Phase 5: Viewport Math & Rotation State
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
-    var viewportSizePx by remember { mutableFloatStateOf(1f) }
+    var targetAspectRatio by remember { mutableFloatStateOf(1f) }
+    var rotationDegrees by remember { mutableFloatStateOf(0f) }
+    var viewportWidthPx by remember { mutableFloatStateOf(1f) }
+    var viewportHeightPx by remember { mutableFloatStateOf(1f) }
+
+    fun resetViewport() {
+        scale = 1f
+        offsetX = 0f
+        offsetY = 0f
+    }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -144,10 +152,9 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                         imageSizeMb = sizeBytes / (1024f * 1024f)
                         imageExtension = name.substringAfterLast('.', "JPG").uppercase().take(3)
 
-                        // Reset Viewport
-                        scale = 1f
-                        offsetX = 0f
-                        offsetY = 0f
+                        resetViewport()
+                        rotationDegrees = 0f
+                        targetAspectRatio = 1f
                         isComplete = false
                         outputUri = null
                     }
@@ -177,11 +184,14 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                         var pendingDestUri: Uri? = null
 
                         try {
-                            val outputResolution = 1080f // High-quality 1080x1080 crop
+                            // Phase 5: Dynamic Resolution based on Aspect Ratio
+                            val outputBase = 1080f
+                            val outW = if (targetAspectRatio >= 1f) outputBase else outputBase * targetAspectRatio
+                            val outH = if (targetAspectRatio <= 1f) outputBase else outputBase / targetAspectRatio
+
                             val originalName = imageName.substringBeforeLast(".")
                             val finalName = "${originalName}_cropped.jpg"
 
-                            // Safe Memory Decoding
                             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                             context.contentResolver.openInputStream(imageUri!!)?.use { BitmapFactory.decodeStream(it, null, options) }
 
@@ -194,23 +204,32 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                                 BitmapFactory.decodeStream(it, null, options)
                             } ?: throw Exception("Failed to load source image")
 
+                            // Phase 5: Safe Pre-Rotation Buffer
+                            var activeBitmap = original
+                            if (rotationDegrees % 360f != 0f) {
+                                val rotMatrix = Matrix().apply { postRotate(rotationDegrees) }
+                                activeBitmap = Bitmap.createBitmap(original, 0, 0, original.width, original.height, rotMatrix, true)
+                                if (activeBitmap != original) original.recycle()
+                            }
+
                             // Native Canvas Coordinate Mapping Engine
-                            val resultBitmap = Bitmap.createBitmap(outputResolution.toInt(), outputResolution.toInt(), Bitmap.Config.ARGB_8888)
+                            val resultBitmap = Bitmap.createBitmap(outW.toInt(), outH.toInt(), Bitmap.Config.ARGB_8888)
                             val canvas = Canvas(resultBitmap)
                             val matrix = Matrix()
 
-                            // Step 1: Base ContentScale.Crop mapping
-                            val scaleToFill = maxOf(outputResolution / original.width, outputResolution / original.height)
-                            matrix.postTranslate((outputResolution - original.width) / 2f, (outputResolution - original.height) / 2f)
-                            matrix.postScale(scaleToFill, scaleToFill, outputResolution / 2f, outputResolution / 2f)
+                            // Base ContentScale.Crop mapping
+                            val scaleToFill = maxOf(outW / activeBitmap.width, outH / activeBitmap.height)
+                            matrix.postTranslate((outW - activeBitmap.width) / 2f, (outH - activeBitmap.height) / 2f)
+                            matrix.postScale(scaleToFill, scaleToFill, outW / 2f, outH / 2f)
 
-                            // Step 2: Map user gestures from UI viewport to 1080p canvas
-                            val transformScaleMultiplier = outputResolution / viewportSizePx
-                            matrix.postScale(scale, scale, outputResolution / 2f, outputResolution / 2f)
-                            matrix.postTranslate(offsetX * transformScaleMultiplier, offsetY * transformScaleMultiplier)
+                            // Map user gestures from UI viewport to canvas
+                            val transformScaleMultiplierX = outW / viewportWidthPx
+                            val transformScaleMultiplierY = outH / viewportHeightPx
 
-                            // Render
-                            canvas.drawBitmap(original, matrix, Paint(Paint.FILTER_BITMAP_FLAG))
+                            matrix.postScale(scale, scale, outW / 2f, outH / 2f)
+                            matrix.postTranslate(offsetX * transformScaleMultiplierX, offsetY * transformScaleMultiplierY)
+
+                            canvas.drawBitmap(activeBitmap, matrix, Paint(Paint.FILTER_BITMAP_FLAG))
 
                             // Save to Storage
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -237,7 +256,7 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                                 pendingDestUri = Uri.fromFile(file)
                             }
 
-                            original.recycle()
+                            activeBitmap.recycle()
                             resultBitmap.recycle()
 
                             withContext(Dispatchers.Main) {
@@ -410,14 +429,13 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
 
             // Interactive Crop Viewport
             if (imageUri != null) {
-                // FIXED: Changed `horizontal` to `start` and `end`
                 Row(modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("Interactive Editor", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
                     Row(
-                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable {
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = !isProcessing) {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            scale = 1f; offsetX = 0f; offsetY = 0f
-                        }.padding(horizontal = 6.dp, vertical = 2.dp),
+                            resetViewport()
+                        }.alpha(if (isProcessing) 0.5f else 1f).padding(horizontal = 6.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Outlined.RestartAlt, contentDescription = null, tint = Primary, modifier = Modifier.size(14.dp))
@@ -436,27 +454,31 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                     BoxWithConstraints(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .aspectRatio(1f) // 1:1 Square Crop Box
+                            .aspectRatio(targetAspectRatio)
                             .clip(RoundedCornerShape(8.dp))
                             .background(InverseSurface)
-                            .pointerInput(Unit) {
+                            .pointerInput(targetAspectRatio, rotationDegrees) {
                                 detectTransformGestures { _, pan, zoom, _ ->
+                                    if (isProcessing) return@detectTransformGestures
                                     scale = (scale * zoom).coerceIn(1f, 5f)
-                                    val maxOffset = (viewportSizePx * scale - viewportSizePx) / 2f
-                                    offsetX = (offsetX + pan.x).coerceIn(-maxOffset, maxOffset)
-                                    offsetY = (offsetY + pan.y).coerceIn(-maxOffset, maxOffset)
+                                    val maxOffsetX = (viewportWidthPx * scale - viewportWidthPx) / 2f
+                                    val maxOffsetY = (viewportHeightPx * scale - viewportHeightPx) / 2f
+                                    offsetX = (offsetX + pan.x).coerceIn(-maxOffsetX, maxOffsetX)
+                                    offsetY = (offsetY + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
                                 }
                             }
                     ) {
-                        viewportSizePx = constraints.maxWidth.toFloat()
+                        viewportWidthPx = constraints.maxWidth.toFloat()
+                        viewportHeightPx = constraints.maxHeight.toFloat()
 
                         AsyncImage(
                             model = imageUri,
                             contentDescription = "Viewport",
-                            contentScale = ContentScale.Crop, // Matches output canvas logic
+                            contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer(
+                                    rotationZ = rotationDegrees,
                                     scaleX = scale,
                                     scaleY = scale,
                                     translationX = offsetX,
@@ -477,17 +499,54 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
+                    // Phase 5: Aspect Ratio & Rotation Segmented Controls
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("1:1 Aspect Ratio Lock", fontSize = 11.sp, color = OnSurfaceVariant)
-                        Text("Pinch to Zoom · Drag to Pan", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Outline)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            RatioChip("1:1", targetAspectRatio == 1f, !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 1f; resetViewport() }
+                            RatioChip("4:3", targetAspectRatio == 4f/3f, !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 4f/3f; resetViewport() }
+                            RatioChip("16:9", targetAspectRatio == 16f/9f, !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 16f/9f; resetViewport() }
+                            RatioChip("3:4", targetAspectRatio == 3f/4f, !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 3f/4f; resetViewport() }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(SurfaceContainerHigh)
+                                .clickable(enabled = !isProcessing) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    rotationDegrees += 90f
+                                    resetViewport()
+                                }
+                                .alpha(if (isProcessing) 0.5f else 1f)
+                                .padding(8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Outlined.RotateRight, contentDescription = "Rotate 90", tint = Primary, modifier = Modifier.size(16.dp))
+                        }
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(120.dp))
         }
+    }
+}
+
+@Composable
+private fun RatioChip(label: String, isSelected: Boolean, isEnabled: Boolean, onClick: () -> Unit) {
+    val bg = if (isSelected) PrimaryContainer else SurfaceContainerHigh
+    val textCol = if (isSelected) OnPrimaryContainer else OnSurfaceVariant
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(bg)
+            .clickable(enabled = isEnabled) { onClick() }
+            .alpha(if (isEnabled) 1f else 0.5f)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = textCol)
     }
 }
 
