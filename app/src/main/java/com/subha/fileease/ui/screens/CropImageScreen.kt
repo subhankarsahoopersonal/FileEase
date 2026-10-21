@@ -1,6 +1,15 @@
 package com.subha.fileease.ui.screens
 
+import android.content.ContentValues
+import android.content.Intent
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.VibrationEffect
 import android.os.Vibrator
+import android.provider.MediaStore
+import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -34,13 +43,18 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
@@ -61,31 +75,89 @@ private val PrimaryContainer = Color(0xFF0066FF)
 private val OnPrimaryContainer = Color(0xFFF8F7FF)
 private val Secondary = Color(0xFF0058BE)
 private val SecondaryContainer = Color(0xFF2170E4)
+private val Error = Color(0xFFBA1A1A)
+private val ErrorContainer = Color(0xFFFFDAD6)
+private val Outline = Color(0xFF727687)
+private val OutlineVariant = Color(0xFFC2C6D8)
 
 @Composable
 fun CropImageScreen(onNavigateBack: () -> Unit) {
+    val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
     // Engine & Output State
-    var hasImage by remember { mutableStateOf(true) }
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
+
+    // Phase 2: Dynamic Image Metadata State
+    var imageUri by remember { mutableStateOf<Uri?>(null) }
+    var imageName by remember { mutableStateOf("") }
+    var imageWidth by remember { mutableIntStateOf(0) }
+    var imageHeight by remember { mutableIntStateOf(0) }
+    var imageSizeMb by remember { mutableFloatStateOf(0f) }
+    var imageExtension by remember { mutableStateOf("JPG") }
 
     // Tuning State
     var targetQuality by remember { mutableFloatStateOf(82f) }
     var stripExif by remember { mutableStateOf(true) }
     var convertWebp by remember { mutableStateOf(false) }
 
-    // Pure Kotlin Float Math
+    // Dynamic Math Engine based on REAL file size
+    val baseSize = if (imageSizeMb > 0f) imageSizeMb else 8.4f
     val factor = maxOf(0.08f, (targetQuality / 100f).pow(1.8f))
-    val estimatedMb = 8.4f * factor
-    val savedMb = 8.4f - estimatedMb
-    val percentSavings = ((savedMb / 8.4f) * 100f).roundToInt()
-    val ratioWidth = maxOf(0.08f, minOf(1.0f, estimatedMb / 8.4f))
+    val estimatedMb = baseSize * factor
+    val savedMb = baseSize - estimatedMb
+    val percentSavings = if (baseSize > 0f) ((savedMb / baseSize) * 100f).roundToInt() else 78
+    val ratioWidth = if (baseSize > 0f) maxOf(0.08f, minOf(1.0f, estimatedMb / baseSize)) else 0.22f
 
     val progressWidth by animateFloatAsState(targetValue = ratioWidth, label = "savings")
+
+    // Phase 2: Native File Picker Launcher
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch(Dispatchers.IO) {
+                try {
+                    var name = "Image.jpg"
+                    var sizeBytes = 0L
+
+                    // Extract exact filename and file size safely
+                    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                        if (cursor.moveToFirst()) {
+                            name = cursor.getString(nameIdx) ?: "Image.jpg"
+                            sizeBytes = cursor.getLong(sizeIdx)
+                        }
+                    }
+
+                    // Extract Physical Dimensions without loading full Bitmap into RAM (OOM Guardrail)
+                    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    context.contentResolver.openInputStream(uri)?.use {
+                        BitmapFactory.decodeStream(it, null, options)
+                    }
+
+                    val width = options.outWidth
+                    val height = options.outHeight
+                    val sizeMb = sizeBytes / (1024f * 1024f)
+                    val ext = name.substringAfterLast('.', "JPG").uppercase()
+
+                    withContext(Dispatchers.Main) {
+                        imageUri = uri
+                        imageName = name
+                        imageWidth = width
+                        imageHeight = height
+                        imageSizeMb = sizeMb
+                        imageExtension = if (ext.length > 4) ext.take(3) else ext
+                        isComplete = false
+                    }
+                } catch (e: Exception) { e.printStackTrace() }
+            }
+        }
+    }
 
     Scaffold(
         containerColor = Background,
@@ -94,7 +166,7 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
             CropImageBottomBar(
                 isProcessing = isProcessing,
                 isComplete = isComplete,
-                isEnabled = hasImage,
+                isEnabled = imageUri != null,
                 onConvert = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     coroutineScope.launch {
@@ -136,7 +208,7 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Source Image Card
+            // Phase 2: Dynamic Source Image Card
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -146,45 +218,74 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
             ) {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("SOURCE FILE", fontSize = 10.sp, color = OnSurfaceVariant, letterSpacing = 0.5.sp, fontWeight = FontWeight.Medium)
-                    Row(
-                        modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainer).padding(horizontal = 8.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(SecondaryContainer))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Ready", fontSize = 10.sp, color = OnSurfaceVariant)
+                    if (imageUri != null) {
+                        Row(
+                            modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainer).padding(horizontal = 8.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(SecondaryContainer))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Ready", fontSize = 10.sp, color = OnSurfaceVariant)
+                        }
                     }
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainer)) {
-                        // Dummy image for Phase 1
-                        Box(modifier = Modifier.fillMaxSize().background(PrimaryContainer.copy(alpha = 0.2f)))
-                        Box(modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp).clip(RoundedCornerShape(4.dp)).background(InverseSurface.copy(alpha = 0.85f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                            Text("JPG", fontSize = 9.sp, fontWeight = FontWeight.Medium, color = InverseOnSurface)
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("HighRes_Landscape_Camera.jpg", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1)
-                        Text("4000 × 3000 px", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
-                        Row(modifier = Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(SurfaceContainer).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                Text("8.4 MB Original", fontSize = 11.sp, color = OnSurface)
+                if (imageUri != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainer)) {
+                            AsyncImage(
+                                model = imageUri,
+                                contentDescription = "Source Image",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            Box(modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp).clip(RoundedCornerShape(4.dp)).background(InverseSurface.copy(alpha = 0.85f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
+                                Text(imageExtension, fontSize = 9.sp, fontWeight = FontWeight.Medium, color = InverseOnSurface)
                             }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("24-bit sRGB", fontSize = 10.sp, color = OnSurfaceVariant)
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(imageName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("$imageWidth × $imageHeight px", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+                            Row(modifier = Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(SurfaceContainer).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                                    Text("%.1f MB Original".format(imageSizeMb), fontSize = 11.sp, color = OnSurface)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(SurfaceContainer)
+                                .clickable(enabled = !isProcessing) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    imagePickerLauncher.launch("image/*")
+                                }
+                                .alpha(if (isProcessing) 0.5f else 1f)
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Text("Change", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Primary)
                         }
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                } else {
                     Box(
                         modifier = Modifier
+                            .fillMaxWidth()
+                            .height(84.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(SurfaceContainer)
-                            .clickable { }
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .background(SurfaceContainerLow)
+                            .clickable {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                imagePickerLauncher.launch("image/*")
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text("Change", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Outlined.AddPhotoAlternate, contentDescription = null, tint = Primary)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Tap to browse gallery", fontSize = 13.sp, color = Outline, fontWeight = FontWeight.Medium)
+                        }
                     }
                 }
             }
@@ -231,7 +332,7 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Output (~$percentSavings%)", fontSize = 10.sp, color = OnPrimary.copy(alpha = 0.8f))
-                        Text("Original (8.4 MB)", fontSize = 10.sp, color = OnPrimary.copy(alpha = 0.8f))
+                        Text(if(imageUri != null) "Original (%.1f MB)".format(baseSize) else "Original (8.4 MB)", fontSize = 10.sp, color = OnPrimary.copy(alpha = 0.8f))
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Box(modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(50)).background(SurfaceContainerLowest.copy(alpha = 0.3f))) {
@@ -243,7 +344,6 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
 
             // Compression Presets
-            // FIXED: Using start and end instead of horizontal to fix compiler error
             Row(modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("Compression Presets", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
                 Text("Pick one or customize below", fontSize = 10.sp, color = OnSurfaceVariant)
@@ -252,30 +352,33 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 PresetCard(
                     title = "Smart Compress",
-                    sizeText = "~1.8 MB",
+                    sizeText = "~%.1f MB".format(baseSize * 0.22f),
                     desc = "80% Quality · Balanced for web & messaging apps",
                     badge1 = "-78% size",
                     badge2 = "• Imperceptible loss",
                     isSelected = targetQuality == 80f,
                     isRecommended = true,
+                    isEnabled = !isProcessing,
                     onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetQuality = 80f }
                 )
                 PresetCard(
                     title = "Maximum Shrink",
-                    sizeText = "~820 KB",
+                    sizeText = "~${(baseSize * 0.08f * 1000).toInt()} KB",
                     desc = "50% Quality · Ultra compact for strict email attachment caps",
                     badge1 = "-90% size",
                     badge2 = "• Noticeable compression",
                     isSelected = targetQuality == 50f,
+                    isEnabled = !isProcessing,
                     onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetQuality = 50f }
                 )
                 PresetCard(
                     title = "Minimal Compression",
-                    sizeText = "~5.1 MB",
+                    sizeText = "~%.1f MB".format(baseSize * 0.61f),
                     desc = "95% Quality · Near-lossless archival for physical photo printing",
                     badge1 = "-39% size",
                     badge2 = "• Pure studio fidelity",
                     isSelected = targetQuality == 95f,
+                    isEnabled = !isProcessing,
                     onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetQuality = 95f }
                 )
             }
@@ -308,6 +411,7 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                     value = targetQuality,
                     onValueChange = { targetQuality = it },
                     valueRange = 10f..98f,
+                    enabled = !isProcessing,
                     colors = SliderDefaults.colors(
                         thumbColor = PrimaryContainer,
                         activeTrackColor = PrimaryContainer,
@@ -351,7 +455,8 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                             Text("Purge GPS coords, camera maker, shutter timestamps", fontSize = 12.sp, color = OnSurfaceVariant)
                         }
                     }
-                    CustomSwitch(checked = stripExif, onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); stripExif = it })
+                    // FIXED: Passed isEnabled into CustomSwitch
+                    CustomSwitch(checked = stripExif, isEnabled = !isProcessing, onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); stripExif = it })
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -369,7 +474,8 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                             Text("Modern format yields an extra ~25% data compression", fontSize = 12.sp, color = OnSurfaceVariant)
                         }
                     }
-                    CustomSwitch(checked = convertWebp, onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); convertWebp = it })
+                    // FIXED: Passed isEnabled into CustomSwitch
+                    CustomSwitch(checked = convertWebp, isEnabled = !isProcessing, onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); convertWebp = it })
                 }
             }
 
@@ -387,6 +493,7 @@ private fun PresetCard(
     badge2: String,
     isSelected: Boolean,
     isRecommended: Boolean = false,
+    isEnabled: Boolean = true,
     onClick: () -> Unit
 ) {
     Row(
@@ -394,7 +501,8 @@ private fun PresetCard(
             .fillMaxWidth()
             .shadow(1.dp, RoundedCornerShape(12.dp))
             .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
-            .clickable { onClick() }
+            .clickable(enabled = isEnabled) { onClick() }
+            .alpha(if (isEnabled) 1f else 0.5f)
             .padding(16.dp),
         verticalAlignment = Alignment.Top
     ) {
@@ -427,8 +535,9 @@ private fun PresetCard(
     }
 }
 
+// FIXED: Added isEnabled parameter to the definition
 @Composable
-private fun CustomSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun CustomSwitch(checked: Boolean, isEnabled: Boolean = true, onCheckedChange: (Boolean) -> Unit) {
     val bg by animateColorAsState(if (checked) PrimaryContainer else SurfaceContainerHigh, label = "switchBg")
     val offset by animateDpAsState(if (checked) 24.dp else 0.dp, label = "switchOffset")
 
@@ -437,8 +546,8 @@ private fun CustomSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
             .width(48.dp)
             .height(24.dp)
             .clip(RoundedCornerShape(50))
-            .background(bg)
-            .clickable { onCheckedChange(!checked) }
+            .background(bg.copy(alpha = if (isEnabled) 1f else 0.5f))
+            .clickable(enabled = isEnabled) { onCheckedChange(!checked) }
             .padding(2.dp),
         contentAlignment = Alignment.CenterStart
     ) {
@@ -446,7 +555,7 @@ private fun CustomSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
             modifier = Modifier
                 .offset(x = offset)
                 .size(20.dp)
-                .shadow(1.dp, CircleShape)
+                .shadow(if (isEnabled) 1.dp else 0.dp, CircleShape)
                 .background(SurfaceContainerLowest, CircleShape)
         )
     }
@@ -478,7 +587,7 @@ private fun CropImageTopBar(onNavigateBack: () -> Unit) {
             }
             Spacer(modifier = Modifier.width(4.dp))
             Column {
-                Text("Crop Image", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
+                Text("Compress Image", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerHigh.copy(alpha=0.6f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
                     Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(PrimaryContainer).alpha(alphaPulse))
                     Spacer(modifier = Modifier.width(4.dp))
@@ -501,6 +610,8 @@ private fun CropImageTopBar(onNavigateBack: () -> Unit) {
 @Composable
 private fun CropImageBottomBar(isProcessing: Boolean, isComplete: Boolean, isEnabled: Boolean, onConvert: () -> Unit) {
     val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 12.dp, label = "buttonShape")
+    val buttonColor = if (isEnabled) PrimaryContainer else SurfaceContainerHigh
+    val contentColor = if (isEnabled) OnPrimaryContainer else OutlineVariant
 
     Column(
         modifier = Modifier
@@ -516,7 +627,7 @@ private fun CropImageBottomBar(isProcessing: Boolean, isComplete: Boolean, isEna
                     .height(48.dp)
                     .shadow(if (isEnabled && !isProcessing && !isComplete) 4.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.5f))
                     .clip(RoundedCornerShape(cornerRadius))
-                    .background(PrimaryContainer)
+                    .background(buttonColor)
                     .clickable(enabled = isEnabled && !isProcessing && !isComplete) { onConvert() },
                 contentAlignment = Alignment.Center
             ) {
@@ -524,17 +635,17 @@ private fun CropImageBottomBar(isProcessing: Boolean, isComplete: Boolean, isEna
                     val (processing, complete) = state
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (processing) {
-                            CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            CircularProgressIndicator(color = contentColor, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Optimizing Pixels...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                            Text("Optimizing Pixels...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                         } else if (complete) {
-                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Compressed & Saved!", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                            Text("Compressed & Saved!", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                         } else {
-                            Icon(Icons.Outlined.Compress, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Outlined.Compress, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Compress & Save Image", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                            Text("Compress & Save Image", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                         }
                     }
                 }
