@@ -2,6 +2,7 @@ package com.subha.fileease.ui.screens
 
 import android.content.ContentValues
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
@@ -52,9 +53,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
@@ -84,14 +86,17 @@ private val OutlineVariant = Color(0xFFC2C6D8)
 fun CropImageScreen(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
+    val vibrator = remember { context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as Vibrator }
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // Engine & Output State
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
+    var outputUri by remember { mutableStateOf<Uri?>(null) }
 
-    // Phase 2: Dynamic Image Metadata State
+    // Dynamic Image Metadata State
     var imageUri by remember { mutableStateOf<Uri?>(null) }
     var imageName by remember { mutableStateOf("") }
     var imageWidth by remember { mutableIntStateOf(0) }
@@ -114,7 +119,6 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
 
     val progressWidth by animateFloatAsState(targetValue = ratioWidth, label = "savings")
 
-    // Phase 2: Native File Picker Launcher
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
@@ -124,7 +128,6 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                     var name = "Image.jpg"
                     var sizeBytes = 0L
 
-                    // Extract exact filename and file size safely
                     context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                         val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                         val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
@@ -134,7 +137,6 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                         }
                     }
 
-                    // Extract Physical Dimensions without loading full Bitmap into RAM (OOM Guardrail)
                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     context.contentResolver.openInputStream(uri)?.use {
                         BitmapFactory.decodeStream(it, null, options)
@@ -153,8 +155,12 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                         imageSizeMb = sizeMb
                         imageExtension = if (ext.length > 4) ext.take(3) else ext
                         isComplete = false
+                        outputUri = null
                     }
-                } catch (e: Exception) { e.printStackTrace() }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    withContext(Dispatchers.Main) { snackbarHostState.showSnackbar("Failed to read image.") }
+                }
             }
         }
     }
@@ -162,6 +168,7 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
     Scaffold(
         containerColor = Background,
         topBar = { CropImageTopBar(onNavigateBack) },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             CropImageBottomBar(
                 isProcessing = isProcessing,
@@ -169,14 +176,125 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                 isEnabled = imageUri != null,
                 onConvert = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    coroutineScope.launch {
+                    if (imageUri == null) return@CropImageBottomBar
+
+                    // Phase 3: Hardware compression pipeline
+                    coroutineScope.launch(Dispatchers.IO) {
                         isProcessing = true
-                        delay(1100)
-                        isProcessing = false
-                        isComplete = true
-                        delay(1800)
-                        isComplete = false
+                        var pendingDestUri: Uri? = null
+
+                        try {
+                            val targetExt = if (convertWebp) "webp" else "jpg"
+                            val targetMime = if (convertWebp) "image/webp" else "image/jpeg"
+                            val compressFormat = if (convertWebp) {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
+                            } else Bitmap.CompressFormat.JPEG
+
+                            val originalName = imageName.substringBeforeLast(".")
+                            val finalName = "${originalName}_compressed.$targetExt"
+
+                            // Safely decode original into memory
+                            val bitmap = context.contentResolver.openInputStream(imageUri!!)?.use {
+                                BitmapFactory.decodeStream(it)
+                            } ?: throw Exception("Failed to load source image")
+
+                            // Write to MediaStore
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                                val details = ContentValues().apply {
+                                    put(MediaStore.Images.Media.DISPLAY_NAME, finalName)
+                                    put(MediaStore.Images.Media.MIME_TYPE, targetMime)
+                                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FileEase")
+                                }
+                                pendingDestUri = context.contentResolver.insert(collection, details)
+                                pendingDestUri?.let { destUri ->
+                                    context.contentResolver.openOutputStream(destUri)?.use { out ->
+                                        bitmap.compress(compressFormat, targetQuality.toInt(), out)
+                                    }
+                                }
+                            } else {
+                                @Suppress("DEPRECATION")
+                                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "FileEase")
+                                if (!dir.exists()) dir.mkdirs()
+                                val file = File(dir, finalName)
+                                FileOutputStream(file).use { out ->
+                                    bitmap.compress(compressFormat, targetQuality.toInt(), out)
+                                }
+                                pendingDestUri = Uri.fromFile(file)
+                            }
+
+                            // Optional EXIF preservation (orientation specifically to avoid sideways photos)
+                            if (!stripExif && !convertWebp && pendingDestUri != null) {
+                                try {
+                                    context.contentResolver.openInputStream(imageUri!!)?.use { inStream ->
+                                        val oldExif = android.media.ExifInterface(inStream)
+                                        context.contentResolver.openFileDescriptor(pendingDestUri!!, "rw")?.use { pfd ->
+                                            val newExif = android.media.ExifInterface(pfd.fileDescriptor)
+                                            oldExif.getAttribute(android.media.ExifInterface.TAG_ORIENTATION)?.let {
+                                                newExif.setAttribute(android.media.ExifInterface.TAG_ORIENTATION, it)
+                                                newExif.saveAttributes()
+                                            }
+                                        }
+                                    }
+                                } catch (e: Exception) { e.printStackTrace() } // Fail silently if EXIF crashes
+                            }
+
+                            bitmap.recycle() // OOM protection
+
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                isComplete = true
+                                outputUri = pendingDestUri
+
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                snackbarHostState.showSnackbar("Failed to compress image.")
+                            }
+                        }
                     }
+                },
+                onShare = {
+                    outputUri?.let { uri ->
+                        try {
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "image/*"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Share Image"))
+                        } catch (e: Exception) {
+                            coroutineScope.launch { snackbarHostState.showSnackbar("Error launching share sheet.") }
+                        }
+                    }
+                },
+                onOpen = {
+                    outputUri?.let { uri ->
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "image/*")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Open Image"))
+                        } catch (e: Exception) {
+                            coroutineScope.launch { snackbarHostState.showSnackbar("No gallery app installed.") }
+                        }
+                    }
+                },
+                onReset = {
+                    isComplete = false
+                    outputUri = null
+                    imageUri = null
+                    imageSizeMb = 0f
                 }
             )
         },
@@ -208,7 +326,7 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Phase 2: Dynamic Source Image Card
+            // Source Image Card
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -455,7 +573,6 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                             Text("Purge GPS coords, camera maker, shutter timestamps", fontSize = 12.sp, color = OnSurfaceVariant)
                         }
                     }
-                    // FIXED: Passed isEnabled into CustomSwitch
                     CustomSwitch(checked = stripExif, isEnabled = !isProcessing, onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); stripExif = it })
                 }
 
@@ -474,7 +591,6 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                             Text("Modern format yields an extra ~25% data compression", fontSize = 12.sp, color = OnSurfaceVariant)
                         }
                     }
-                    // FIXED: Passed isEnabled into CustomSwitch
                     CustomSwitch(checked = convertWebp, isEnabled = !isProcessing, onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); convertWebp = it })
                 }
             }
@@ -535,7 +651,6 @@ private fun PresetCard(
     }
 }
 
-// FIXED: Added isEnabled parameter to the definition
 @Composable
 private fun CustomSwitch(checked: Boolean, isEnabled: Boolean = true, onCheckedChange: (Boolean) -> Unit) {
     val bg by animateColorAsState(if (checked) PrimaryContainer else SurfaceContainerHigh, label = "switchBg")
@@ -608,7 +723,15 @@ private fun CropImageTopBar(onNavigateBack: () -> Unit) {
 }
 
 @Composable
-private fun CropImageBottomBar(isProcessing: Boolean, isComplete: Boolean, isEnabled: Boolean, onConvert: () -> Unit) {
+private fun CropImageBottomBar(
+    isProcessing: Boolean,
+    isComplete: Boolean,
+    isEnabled: Boolean,
+    onConvert: () -> Unit,
+    onShare: () -> Unit,
+    onOpen: () -> Unit,
+    onReset: () -> Unit
+) {
     val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 12.dp, label = "buttonShape")
     val buttonColor = if (isEnabled) PrimaryContainer else SurfaceContainerHigh
     val contentColor = if (isEnabled) OnPrimaryContainer else OutlineVariant
@@ -621,41 +744,72 @@ private fun CropImageBottomBar(isProcessing: Boolean, isComplete: Boolean, isEna
             .navigationBarsPadding()
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.9f)
-                    .height(48.dp)
-                    .shadow(if (isEnabled && !isProcessing && !isComplete) 4.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.5f))
-                    .clip(RoundedCornerShape(cornerRadius))
-                    .background(buttonColor)
-                    .clickable(enabled = isEnabled && !isProcessing && !isComplete) { onConvert() },
-                contentAlignment = Alignment.Center
-            ) {
-                AnimatedContent(targetState = Pair(isProcessing, isComplete), label = "btn") { state ->
-                    val (processing, complete) = state
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (processing) {
-                            CircularProgressIndicator(color = contentColor, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Optimizing Pixels...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
-                        } else if (complete) {
-                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Compressed & Saved!", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
-                        } else {
-                            Icon(Icons.Outlined.Compress, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Compress & Save Image", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+            AnimatedContent(targetState = isComplete, label = "ActionBarTransition") { complete ->
+                if (complete) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        PostActionItem(icon = Icons.Outlined.Share, label = "Share File", onClick = onShare)
+                        PostActionItem(icon = Icons.Outlined.OpenInNew, label = "Open File", onClick = onOpen)
+                        PostActionItem(icon = Icons.Outlined.RestartAlt, label = "Compress New", onClick = onReset)
+                    }
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(0.9f)
+                                .height(48.dp)
+                                .shadow(if (isEnabled && !isProcessing) 4.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.5f))
+                                .clip(RoundedCornerShape(cornerRadius))
+                                .background(buttonColor)
+                                .clickable(enabled = isEnabled && !isProcessing) { onConvert() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AnimatedContent(targetState = isProcessing, label = "btnState") { processing ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (processing) {
+                                        CircularProgressIndicator(color = contentColor, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Optimizing Pixels...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                                    } else {
+                                        Icon(Icons.Outlined.Compress, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Compress & Save Image", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.VerifiedUser, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("No uploads. Processed strictly in browser memory.", fontSize = 10.sp, color = OnSurfaceVariant)
                         }
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.VerifiedUser, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(14.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("No uploads. Processed strictly in browser memory.", fontSize = 10.sp, color = OnSurfaceVariant)
-            }
         }
+    }
+}
+
+@Composable
+private fun PostActionItem(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onClick() }
+            .padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier.size(44.dp).clip(CircleShape).background(SurfaceContainerLow),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = label, tint = Primary, modifier = Modifier.size(20.dp))
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
     }
 }
