@@ -12,15 +12,17 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.MediaStore
 import android.text.Layout
+import android.text.SpannableStringBuilder
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.style.RelativeSizeSpan
+import android.text.style.StyleSpan
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -75,7 +77,6 @@ private val OnSurfaceVariant = Color(0xFF424656)
 private val Primary = Color(0xFF0050CB)
 private val OnPrimary = Color(0xFFFFFFFF)
 private val PrimaryContainer = Color(0xFF0066FF)
-// FIX: Added the missing OnPrimaryContainer token
 private val OnPrimaryContainer = Color(0xFFF8F7FF)
 private val Secondary = Color(0xFF0058BE)
 private val Outline = Color(0xFF727687)
@@ -121,7 +122,6 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
     var conversionProgress by remember { mutableFloatStateOf(0f) }
     var currentPage by remember { mutableIntStateOf(0) }
 
-    // Text File Import Launcher
     val textPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
@@ -160,7 +160,6 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                 onConvert = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
 
-                    // Phase 3: Storage Quota Verification
                     val usableSpaceMb = Environment.getDataDirectory().usableSpace / (1024 * 1024)
                     if (usableSpaceMb < 5) {
                         coroutineScope.launch {
@@ -179,15 +178,13 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                         var pdfDocument: PdfDocument? = null
 
                         try {
-                            // 1. PDF Architecture Setup (A4 Size: 595 x 842 points)
                             pdfDocument = PdfDocument()
                             val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
 
                             val margin = 56f // ~20mm margins
                             val usableWidth = 595f - (margin * 2)
-                            val usableHeight = 842f - (margin * 2) - (if (pageNumbersEnabled) 30f else 0f)
+                            val usableHeight = 842f - (margin * 2) - (if (pageNumbersEnabled || authorName.isNotBlank()) 30f else 0f)
 
-                            // 2. Map UI selections to Native TextPaint
                             val textPaint = TextPaint().apply {
                                 isAntiAlias = true
                                 color = android.graphics.Color.BLACK
@@ -212,23 +209,23 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                                 else -> 1.5f
                             }
 
-                            // 3. Phase 3: CPU Thread Offloading for StaticLayout to prevent UI Jank
+                            // Phase 4: CPU Offloading & Markdown Regex Parsing
                             val staticLayout = withContext(Dispatchers.Default) {
+                                val spannableText = parseMarkdownToSpannable(textContent)
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                    StaticLayout.Builder.obtain(textContent, 0, textContent.length, textPaint, usableWidth.toInt())
+                                    StaticLayout.Builder.obtain(spannableText, 0, spannableText.length, textPaint, usableWidth.toInt())
                                         .setAlignment(Layout.Alignment.ALIGN_NORMAL)
                                         .setLineSpacing(0f, spacingMult)
                                         .setIncludePad(false)
                                         .build()
                                 } else {
                                     @Suppress("DEPRECATION")
-                                    StaticLayout(textContent, textPaint, usableWidth.toInt(), Layout.Alignment.ALIGN_NORMAL, spacingMult, 0f, false)
+                                    StaticLayout(spannableText, textPaint, usableWidth.toInt(), Layout.Alignment.ALIGN_NORMAL, spacingMult, 0f, false)
                                 }
                             }
 
                             if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled")
 
-                            // 4. Pagination Engine (Deterministic Stream Writing)
                             val totalLines = staticLayout.lineCount
                             var currentLine = 0
                             var pageCount = 0
@@ -238,10 +235,12 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                                 val page = pdfDocument.startPage(pageInfo)
                                 val canvas = page.canvas
 
+                                // Phase 4: Prevent dark-mode transparent canvas bug
+                                canvas.drawColor(android.graphics.Color.WHITE)
+
                                 val startY = staticLayout.getLineTop(currentLine)
                                 var linesToDraw = 0
 
-                                // Calculate lines for this page
                                 while (currentLine + linesToDraw < totalLines) {
                                     val lineBottom = staticLayout.getLineBottom(currentLine + linesToDraw)
                                     if (lineBottom - startY > usableHeight) break
@@ -249,7 +248,6 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                                 }
                                 if (linesToDraw == 0) linesToDraw = 1
 
-                                // Draw Content
                                 canvas.save()
                                 canvas.translate(margin, margin - startY.toFloat())
                                 canvas.clipRect(0f, startY.toFloat(), usableWidth, startY.toFloat() + usableHeight)
@@ -258,28 +256,31 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
                                 pageCount++
 
-                                // Footer Generation
-                                if (pageNumbersEnabled) {
+                                // Phase 4: Metadata Integration into PDF Footer
+                                if (pageNumbersEnabled || authorName.isNotBlank()) {
                                     val footerPaint = Paint().apply {
                                         textSize = 10f * 1.35f
                                         color = android.graphics.Color.GRAY
                                         textAlign = Paint.Align.CENTER
                                         typeface = textPaint.typeface
                                     }
-                                    canvas.drawText("- $pageCount -", 595f / 2f, 842f - (margin / 1.5f), footerPaint)
+                                    val footerText = buildString {
+                                        if (authorName.isNotBlank()) append("Signed: $authorName")
+                                        if (pageNumbersEnabled && authorName.isNotBlank()) append("   •   ")
+                                        if (pageNumbersEnabled) append("Page $pageCount")
+                                    }
+                                    canvas.drawText(footerText, 595f / 2f, 842f - (margin / 1.5f), footerPaint)
                                 }
 
                                 pdfDocument.finishPage(page)
                                 currentLine += linesToDraw
 
-                                // Phase 3: Real-time UI Progress bridging
                                 withContext(Dispatchers.Main) {
                                     conversionProgress = currentLine.toFloat() / totalLines.toFloat()
                                     currentPage = pageCount
                                 }
                             }
 
-                            // 5. Scoped Storage MediaStore Export (Downloads Folder)
                             val finalName = if (outputFileName.endsWith(".pdf", ignoreCase = true)) outputFileName else "$outputFileName.pdf"
 
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -308,9 +309,6 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                                 pendingDestUri = Uri.fromFile(file)
                             }
 
-                            pdfDocument.close()
-                            pdfDocument = null
-
                             if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled")
 
                             withContext(Dispatchers.Main) {
@@ -328,8 +326,6 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                             }
 
                         } catch (e: kotlinx.coroutines.CancellationException) {
-                            // Phase 3: Ghost File Rollback on Cancel
-                            pdfDocument?.close()
                             pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
                             withContext(Dispatchers.Main) {
                                 isProcessing = false
@@ -338,13 +334,15 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                             }
                         } catch (e: Exception) {
                             e.printStackTrace()
-                            pdfDocument?.close()
                             pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
                             withContext(Dispatchers.Main) {
                                 isProcessing = false
                                 isCancelling = false
                                 snackbarHostState.showSnackbar("Failed to export PDF.")
                             }
+                        } finally {
+                            // Phase 4: Guardrail memory protection
+                            pdfDocument?.close()
                         }
                     }
                 },
@@ -707,6 +705,30 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
             Spacer(modifier = Modifier.height(140.dp))
         }
     }
+}
+
+// Phase 4: Lightweight Native Markdown Parser Helper
+private fun parseMarkdownToSpannable(text: String): SpannableStringBuilder {
+    val ssb = SpannableStringBuilder(text)
+
+    // Parse # Header 1
+    Regex("(?m)^# (.*)$").findAll(text).forEach { match ->
+        ssb.setSpan(RelativeSizeSpan(1.6f), match.range.first, match.range.last + 1, 0)
+        ssb.setSpan(StyleSpan(Typeface.BOLD), match.range.first, match.range.last + 1, 0)
+    }
+
+    // Parse ## Header 2
+    Regex("(?m)^## (.*)$").findAll(text).forEach { match ->
+        ssb.setSpan(RelativeSizeSpan(1.3f), match.range.first, match.range.last + 1, 0)
+        ssb.setSpan(StyleSpan(Typeface.BOLD), match.range.first, match.range.last + 1, 0)
+    }
+
+    // Parse **Bold** Text
+    Regex("\\*\\*(.*?)\\*\\*").findAll(text).forEach { match ->
+        ssb.setSpan(StyleSpan(Typeface.BOLD), match.range.first, match.range.last + 1, 0)
+    }
+
+    return ssb
 }
 
 @Composable
