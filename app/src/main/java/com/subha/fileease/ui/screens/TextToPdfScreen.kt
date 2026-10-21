@@ -1,10 +1,24 @@
 package com.subha.fileease.ui.screens
 
+import android.content.ContentValues
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.ImageDecoder
+import android.media.MediaScannerConnection
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.VibrationEffect
 import android.os.Vibrator
+import android.provider.MediaStore
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -20,8 +34,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,18 +43,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
+import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 
 // Exact Tailwind Color Tokens from Mockup
 private val Background = Color(0xFFFAF8FF)
@@ -49,6 +73,7 @@ private val SurfaceContainerLowest = Color(0xFFFFFFFF)
 private val SurfaceContainerLow = Color(0xFFF2F3FF)
 private val SurfaceContainer = Color(0xFFEAEDFF)
 private val SurfaceContainerHigh = Color(0xFFE2E7FF)
+private val InverseSurface = Color(0xFF283044)
 private val OnSurface = Color(0xFF131B2E)
 private val OnSurfaceVariant = Color(0xFF424656)
 private val Primary = Color(0xFF0050CB)
@@ -56,14 +81,21 @@ private val OnPrimary = Color(0xFFFFFFFF)
 private val PrimaryContainer = Color(0xFF0066FF)
 private val OnPrimaryContainer = Color(0xFFF8F7FF)
 private val Secondary = Color(0xFF0058BE)
+private val SecondaryContainer = Color(0xFF2170E4)
+private val Tertiary = Color(0xFF4E5A69)
 private val Outline = Color(0xFF727687)
 private val OutlineVariant = Color(0xFFC2C6D8)
+private val Error = Color(0xFFBA1A1A)
+private val ErrorContainer = Color(0xFFFFDAD6)
 
 @Composable
 fun TextToPdfScreen(onNavigateBack: () -> Unit) {
+    val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
+    val vibrator = remember { context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as Vibrator }
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // Mode State
     var inputMode by remember { mutableStateOf("paste") } // "paste" or "import"
@@ -87,24 +119,72 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
     // Export State
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
+    var outputUri by remember { mutableStateOf<Uri?>(null) }
+
+    var conversionJob by remember { mutableStateOf<Job?>(null) }
+    var isCancelling by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = Background,
         topBar = { TextToPdfTopBar(onNavigateBack) },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             TextToPdfBottomBar(
                 isProcessing = isProcessing,
+                isCancelling = isCancelling,
                 isComplete = isComplete,
+                isEnabled = textContent.isNotBlank(),
                 onConvert = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    coroutineScope.launch {
+
+                    conversionJob = coroutineScope.launch {
                         isProcessing = true
-                        delay(700)
-                        isProcessing = false
-                        isComplete = true
-                        delay(2000)
-                        isComplete = false
+                        isCancelling = false
+
+                        try {
+                            delay(200) // Simulating rendering prep
+                            if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled by user")
+                            delay(500) // Simulating Vector generation
+                            if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled by user")
+
+                            isProcessing = false
+                            isComplete = true
+
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
+                            } else {
+                                @Suppress("DEPRECATION")
+                                vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                            }
+
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            isProcessing = false
+                            isCancelling = false
+                            snackbarHostState.showSnackbar("Export cancelled.")
+                        } catch (e: Exception) {
+                            isProcessing = false
+                            isCancelling = false
+                            snackbarHostState.showSnackbar("Failed to export PDF.")
+                        }
                     }
+                },
+                onCancel = {
+                    if (isProcessing) {
+                        isCancelling = true
+                        conversionJob?.cancel()
+                    }
+                },
+                onShare = {
+                    // Placeholder for Phase 2 Share Intent
+                    coroutineScope.launch { snackbarHostState.showSnackbar("Share Intent: $outputFileName") }
+                },
+                onOpen = {
+                    // Placeholder for Phase 2 Open Intent
+                    coroutineScope.launch { snackbarHostState.showSnackbar("Open Intent: $outputFileName") }
+                },
+                onReset = {
+                    isComplete = false
+                    outputUri = null
                 }
             )
         },
@@ -424,47 +504,22 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
 @Composable
 private fun TextToPdfTopBar(onNavigateBack: () -> Unit) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val alphaPulse by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 0.3f,
-        animationSpec = infiniteRepeatable(tween(800, easing = FastOutLinearInEasing), RepeatMode.Reverse), label = "alphaPulse"
-    )
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Surface.copy(alpha = 0.90f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
             .padding(horizontal = 16.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(
-                modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Column {
-                Text("Text To PDF", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerHigh.copy(alpha=0.6f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(PrimaryContainer).alpha(alphaPulse))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Offline Engine Active • 100% On-device", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = OnSurfaceVariant)
-                }
-            }
+        Box(
+            modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(44.dp).clip(CircleShape).clickable { }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Info, contentDescription = "Info", tint = OnSurfaceVariant, modifier = Modifier.size(22.dp))
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(Primary).shadow(1.dp), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Person, contentDescription = "User", tint = OnPrimary, modifier = Modifier.size(18.dp))
-            }
-        }
+        Spacer(modifier = Modifier.width(4.dp))
+        Text("Text To PDF", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
     }
 }
 
@@ -549,7 +604,21 @@ private fun CustomSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
 }
 
 @Composable
-private fun TextToPdfBottomBar(isProcessing: Boolean, isComplete: Boolean, onConvert: () -> Unit) {
+private fun TextToPdfBottomBar(
+    isProcessing: Boolean,
+    isCancelling: Boolean,
+    isComplete: Boolean,
+    isEnabled: Boolean,
+    onConvert: () -> Unit,
+    onCancel: () -> Unit,
+    onShare: () -> Unit,
+    onOpen: () -> Unit,
+    onReset: () -> Unit
+) {
+    val buttonColor = if (isCancelling) ErrorContainer else PrimaryContainer
+    val contentColor = if (isCancelling) Error else OnPrimaryContainer
+    val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 12.dp, label = "buttonShape")
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -557,48 +626,82 @@ private fun TextToPdfBottomBar(isProcessing: Boolean, isComplete: Boolean, onCon
             .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.06f))
             .navigationBarsPadding()
     ) {
-        // FIXED: Using individual padding sides to prevent compile error
         Column(modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)) {
-            Row(modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Primary))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Targeting ~24 KB output size", fontSize = 10.sp, color = OnSurfaceVariant)
-                }
-                Text("1 Page document preview", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary)
-            }
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .shadow(4.dp, RoundedCornerShape(12.dp), spotColor = PrimaryContainer.copy(alpha = 0.5f))
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(PrimaryContainer)
-                    .clickable(enabled = !isProcessing && !isComplete) { onConvert() },
-                contentAlignment = Alignment.Center
-            ) {
-                AnimatedContent(
-                    targetState = Pair(isProcessing, isComplete),
-                    label = "buttonContent"
-                ) { states ->
-                    val (processing, complete) = states
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (processing) {
-                            CircularProgressIndicator(color = OnPrimaryContainer, modifier = Modifier.size(20.dp), strokeWidth = 2.5.dp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Compiling Vector PDF...", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
-                        } else if (complete) {
-                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("PDF Ready • Saved", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
-                        } else {
-                            Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = OnPrimaryContainer, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Generate PDF from Text", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+
+            AnimatedContent(targetState = isComplete, label = "ActionBarTransition") { complete ->
+                if (complete) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        PostActionItem(icon = Icons.Outlined.Share, label = "Share File", onClick = onShare)
+                        PostActionItem(icon = Icons.Outlined.OpenInNew, label = "Open File", onClick = onOpen)
+                        PostActionItem(icon = Icons.Outlined.RestartAlt, label = "Convert New", onClick = onReset)
+                    }
+                } else {
+                    Column {
+                        Row(modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Primary))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Targeting ~24 KB output size", fontSize = 10.sp, color = OnSurfaceVariant)
+                            }
+                            Text("1 Page document preview", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .shadow(if (isEnabled && !isProcessing) 4.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = buttonColor.copy(alpha = 0.5f))
+                                .clip(RoundedCornerShape(cornerRadius))
+                                .background(if (!isEnabled) SurfaceContainerHigh else buttonColor)
+                                .clickable(enabled = isEnabled) {
+                                    if (isProcessing && !isCancelling) onCancel() else if (!isProcessing) onConvert()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AnimatedContent(targetState = Pair(isProcessing, isCancelling), label = "buttonState") { (processing, cancelling) ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (cancelling) {
+                                        Icon(Icons.Outlined.Cancel, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Cancelling...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                                    } else if (processing) {
+                                        CircularProgressIndicator(color = contentColor, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Compiling Vector PDF...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                                    } else {
+                                        Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = if (isEnabled) contentColor else OutlineVariant, modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Generate PDF from Text", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (isEnabled) contentColor else OutlineVariant)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PostActionItem(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onClick() }
+            .padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier.size(44.dp).clip(CircleShape).background(SurfaceContainerLow),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = label, tint = Primary, modifier = Modifier.size(20.dp))
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
     }
 }
