@@ -2,23 +2,24 @@ package com.subha.fileease.ui.screens
 
 import android.content.ContentValues
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.ImageDecoder
-import android.media.MediaScannerConnection
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.MediaStore
-import android.provider.OpenableColumns
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -34,8 +35,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,28 +44,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.delay
+import java.io.File
+import java.io.FileOutputStream
 
 // Exact Tailwind Color Tokens from Mockup
 private val Background = Color(0xFFFAF8FF)
@@ -73,7 +69,6 @@ private val SurfaceContainerLowest = Color(0xFFFFFFFF)
 private val SurfaceContainerLow = Color(0xFFF2F3FF)
 private val SurfaceContainer = Color(0xFFEAEDFF)
 private val SurfaceContainerHigh = Color(0xFFE2E7FF)
-private val InverseSurface = Color(0xFF283044)
 private val OnSurface = Color(0xFF131B2E)
 private val OnSurfaceVariant = Color(0xFF424656)
 private val Primary = Color(0xFF0050CB)
@@ -81,8 +76,6 @@ private val OnPrimary = Color(0xFFFFFFFF)
 private val PrimaryContainer = Color(0xFF0066FF)
 private val OnPrimaryContainer = Color(0xFFF8F7FF)
 private val Secondary = Color(0xFF0058BE)
-private val SecondaryContainer = Color(0xFF2170E4)
-private val Tertiary = Color(0xFF4E5A69)
 private val Outline = Color(0xFF727687)
 private val OutlineVariant = Color(0xFFC2C6D8)
 private val Error = Color(0xFFBA1A1A)
@@ -98,7 +91,7 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Mode State
-    var inputMode by remember { mutableStateOf("paste") } // "paste" or "import"
+    var inputMode by remember { mutableStateOf("paste") }
 
     // Editor State
     var textContent by remember { mutableStateOf("# Project Executive Summary\nDate: Oct 24, 2024\nLead: FileEase Engineering Core\n\n1. Project Scope & Milestones\n- Native client-side document processing engine\n- Sub-50ms PDF assembly via Vector Streams\n- Complete offline privacy preservation architecture\n\n2. Key Deliverables\nReady-to-sign formatted brief exported for internal distribution.") }
@@ -113,7 +106,7 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
     // Formatting State
     var pageNumbersEnabled by remember { mutableStateOf(true) }
-    var outputFileName by remember { mutableStateOf("Executive_Summary.pdf") }
+    var outputFileName by remember { mutableStateOf("Executive_Summary") }
     var authorName by remember { mutableStateOf("FileEase User") }
 
     // Export State
@@ -123,6 +116,30 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
     var conversionJob by remember { mutableStateOf<Job?>(null) }
     var isCancelling by remember { mutableStateOf(false) }
+
+    // Text File Import Launcher
+    val textPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        val text = stream.bufferedReader().use { it.readText() }
+                        withContext(Dispatchers.Main) {
+                            textContent = text
+                            inputMode = "paste"
+                            snackbarHostState.showSnackbar("Text imported successfully.")
+                        }
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        snackbarHostState.showSnackbar("Failed to read text file.")
+                    }
+                }
+            }
+        }
+    }
 
     Scaffold(
         containerColor = Background,
@@ -137,34 +154,160 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                 onConvert = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
 
-                    conversionJob = coroutineScope.launch {
+                    conversionJob = coroutineScope.launch(Dispatchers.IO) {
                         isProcessing = true
                         isCancelling = false
 
                         try {
-                            delay(200) // Simulating rendering prep
-                            if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled by user")
-                            delay(500) // Simulating Vector generation
-                            if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled by user")
+                            // 1. PDF Architecture Setup (A4 Size: 595 x 842 points)
+                            val pdfDocument = PdfDocument()
+                            val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
 
-                            isProcessing = false
-                            isComplete = true
+                            val margin = 56f // ~20mm margins
+                            val usableWidth = 595f - (margin * 2)
+                            val usableHeight = 842f - (margin * 2) - (if (pageNumbersEnabled) 30f else 0f)
 
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
+                            // 2. Map UI selections to Native TextPaint
+                            val textPaint = TextPaint().apply {
+                                isAntiAlias = true
+                                color = android.graphics.Color.BLACK
+
+                                // Map Font Family
+                                typeface = when (fontFamily) {
+                                    "Serif" -> Typeface.SERIF
+                                    "Monospace" -> Typeface.MONOSPACE
+                                    else -> Typeface.SANS_SERIF
+                                }
+
+                                // Map Font Size (Scaled to PDF Points)
+                                textSize = when (fontSize) {
+                                    "10pt" -> 10f
+                                    "14pt" -> 14f
+                                    "16pt" -> 16f
+                                    else -> 12f
+                                } * 1.35f
+                            }
+
+                            val spacingMult = when (lineSpacing) {
+                                "1.15x" -> 1.15f
+                                "2.0x" -> 2.0f
+                                else -> 1.5f
+                            }
+
+                            // 3. Build StaticLayout for automatic line-wrapping calculations
+                            val staticLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                StaticLayout.Builder.obtain(textContent, 0, textContent.length, textPaint, usableWidth.toInt())
+                                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                                    .setLineSpacing(0f, spacingMult)
+                                    .setIncludePad(false)
+                                    .build()
                             } else {
                                 @Suppress("DEPRECATION")
-                                vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                StaticLayout(textContent, textPaint, usableWidth.toInt(), Layout.Alignment.ALIGN_NORMAL, spacingMult, 0f, false)
+                            }
+
+                            if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled")
+
+                            // 4. Pagination Engine (Splits wrapped lines across multiple pages dynamically)
+                            val totalLines = staticLayout.lineCount
+                            var currentLine = 0
+                            var pageCount = 0
+
+                            while (currentLine < totalLines) {
+                                if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled")
+                                val page = pdfDocument.startPage(pageInfo)
+                                val canvas = page.canvas
+
+                                val startY = staticLayout.getLineTop(currentLine)
+                                var linesToDraw = 0
+
+                                // Calculate how many lines fit on this specific page
+                                while (currentLine + linesToDraw < totalLines) {
+                                    val lineBottom = staticLayout.getLineBottom(currentLine + linesToDraw)
+                                    if (lineBottom - startY > usableHeight) break
+                                    linesToDraw++
+                                }
+                                if (linesToDraw == 0) linesToDraw = 1 // Guarantee forward progress
+
+                                // Draw Content
+                                canvas.save()
+                                canvas.translate(margin, margin - startY.toFloat())
+                                canvas.clipRect(0f, startY.toFloat(), usableWidth, startY.toFloat() + usableHeight)
+                                staticLayout.draw(canvas)
+                                canvas.restore()
+
+                                pageCount++
+
+                                // Footer Generation
+                                if (pageNumbersEnabled) {
+                                    val footerPaint = Paint().apply {
+                                        textSize = 10f * 1.35f
+                                        color = android.graphics.Color.GRAY
+                                        textAlign = Paint.Align.CENTER
+                                        typeface = textPaint.typeface
+                                    }
+                                    canvas.drawText("- $pageCount -", 595f / 2f, 842f - (margin / 1.5f), footerPaint)
+                                }
+
+                                pdfDocument.finishPage(page)
+                                currentLine += linesToDraw
+                            }
+
+                            // 5. Scoped Storage MediaStore Export (Downloads Folder)
+                            val finalName = if (outputFileName.endsWith(".pdf", ignoreCase = true)) outputFileName else "$outputFileName.pdf"
+                            var destUri: Uri? = null
+
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                                val details = ContentValues().apply {
+                                    put(MediaStore.MediaColumns.DISPLAY_NAME, finalName)
+                                    put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/FileEase")
+                                }
+                                destUri = context.contentResolver.insert(collection, details)
+                                destUri?.let { uri ->
+                                    context.contentResolver.openOutputStream(uri)?.use { out -> pdfDocument.writeTo(out) }
+                                }
+                            } else {
+                                @Suppress("DEPRECATION")
+                                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "FileEase")
+                                if (!dir.exists()) dir.mkdirs()
+                                val file = File(dir, finalName)
+                                FileOutputStream(file).use { out -> pdfDocument.writeTo(out) }
+                                destUri = Uri.fromFile(file)
+                            }
+
+                            pdfDocument.close()
+
+                            if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled")
+
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                isComplete = true
+                                outputUri = destUri
+
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                }
+                                snackbarHostState.showSnackbar("PDF Generated Successfully ($pageCount pages).")
                             }
 
                         } catch (e: kotlinx.coroutines.CancellationException) {
-                            isProcessing = false
-                            isCancelling = false
-                            snackbarHostState.showSnackbar("Export cancelled.")
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                isCancelling = false
+                                snackbarHostState.showSnackbar("Export cancelled.")
+                            }
                         } catch (e: Exception) {
-                            isProcessing = false
-                            isCancelling = false
-                            snackbarHostState.showSnackbar("Failed to export PDF.")
+                            e.printStackTrace()
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                isCancelling = false
+                                snackbarHostState.showSnackbar("Failed to export PDF.")
+                            }
                         }
                     }
                 },
@@ -175,12 +318,31 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                     }
                 },
                 onShare = {
-                    // Placeholder for Phase 2 Share Intent
-                    coroutineScope.launch { snackbarHostState.showSnackbar("Share Intent: $outputFileName") }
+                    outputUri?.let { uri ->
+                        try {
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "application/pdf"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Share Document"))
+                        } catch (e: Exception) {
+                            coroutineScope.launch { snackbarHostState.showSnackbar("Error launching share sheet.") }
+                        }
+                    }
                 },
                 onOpen = {
-                    // Placeholder for Phase 2 Open Intent
-                    coroutineScope.launch { snackbarHostState.showSnackbar("Open Intent: $outputFileName") }
+                    outputUri?.let { uri ->
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "application/pdf")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Open PDF"))
+                        } catch (e: Exception) {
+                            coroutineScope.launch { snackbarHostState.showSnackbar("No PDF viewer installed.") }
+                        }
+                    }
                 },
                 onReset = {
                     isComplete = false
@@ -257,7 +419,10 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                     Text("Supports UTF-8 .txt, .markdown, .md notes", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(
-                        modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryContainer).clickable { haptics.performHapticFeedback(HapticFeedbackType.LongPress) }.padding(horizontal = 16.dp, vertical = 8.dp),
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryContainer).clickable {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            textPickerLauncher.launch("text/*")
+                        }.padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(16.dp))
@@ -645,9 +810,9 @@ private fun TextToPdfBottomBar(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Primary))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Targeting ~24 KB output size", fontSize = 10.sp, color = OnSurfaceVariant)
+                                Text("Dynamic pagination & rendering", fontSize = 10.sp, color = OnSurfaceVariant)
                             }
-                            Text("1 Page document preview", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary)
+                            Text("A4 Document", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary)
                         }
                         Box(
                             modifier = Modifier
