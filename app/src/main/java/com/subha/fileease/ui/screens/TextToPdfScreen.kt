@@ -55,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -98,9 +99,20 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
     // Editor State
     var textContent by remember { mutableStateOf("") }
+    var lineNumbersText by remember { mutableStateOf((1..8).joinToString("\n")) }
     val charCount = textContent.length
     val wordCount = if (textContent.isBlank()) 0 else textContent.split("\\s+".toRegex()).size
-    val lineCount = textContent.lines().size
+
+    // Pull the app's global font family to fix the generic font issue
+    val appFontFamily = MaterialTheme.typography.bodyMedium.fontFamily
+
+    // Unified Text Style to ensure perfect alignment
+    val editorTextStyle = TextStyle(
+        fontFamily = appFontFamily,
+        fontSize = 13.sp,
+        color = OnSurface,
+        lineHeight = 20.sp
+    )
 
     // Typography State
     var fontFamily by remember { mutableStateOf("Sans-Serif") }
@@ -507,7 +519,7 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Text Area with Line Numbers
+                    // Dynamic Text Area with Synchronized Line Numbers
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -515,19 +527,43 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                             .background(SurfaceContainerLow)
                             .padding(12.dp)
                     ) {
-                        Column(modifier = Modifier.width(20.dp), horizontalAlignment = Alignment.End) {
-                            for (i in 1..maxOf(8, lineCount)) {
-                                Text("$i", fontSize = 10.sp, color = Outline, modifier = Modifier.padding(bottom = 5.dp))
-                            }
-                        }
+                        Text(
+                            text = lineNumbersText,
+                            style = editorTextStyle.copy(color = Outline, textAlign = TextAlign.End),
+                            modifier = Modifier.width(20.dp)
+                        )
                         Spacer(modifier = Modifier.width(10.dp))
                         BasicTextField(
                             value = textContent,
                             onValueChange = { textContent = it },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp),
-                            textStyle = TextStyle(fontSize = 12.sp, color = OnSurface, lineHeight = 18.sp),
+                            textStyle = editorTextStyle,
                             cursorBrush = SolidColor(Primary),
-                            enabled = !isProcessing
+                            enabled = !isProcessing,
+                            onTextLayout = { textLayoutResult ->
+                                val builder = java.lang.StringBuilder()
+                                var currentLogicalLine = 1
+
+                                for (i in 0 until textLayoutResult.lineCount) {
+                                    val startOffset = textLayoutResult.getLineStart(i)
+                                    // Identify logical vs wrapped lines
+                                    if (startOffset == 0 || (startOffset > 0 && textContent.getOrNull(startOffset - 1) == '\n')) {
+                                        builder.append(currentLogicalLine).append("\n")
+                                        currentLogicalLine++
+                                    } else {
+                                        builder.append("\n") // Insert blank line for wrapped text
+                                    }
+                                }
+
+                                val visualLines = textLayoutResult.lineCount
+                                if (visualLines < 8) {
+                                    for (i in visualLines until 8) {
+                                        builder.append(currentLogicalLine).append("\n")
+                                        currentLogicalLine++
+                                    }
+                                }
+                                lineNumbersText = builder.toString().trimEnd()
+                            }
                         )
                     }
 
@@ -683,7 +719,7 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                         value = outputFileName,
                         onValueChange = { outputFileName = it },
                         modifier = Modifier.fillMaxWidth(),
-                        textStyle = TextStyle(fontSize = 12.sp, color = OnSurface, fontWeight = FontWeight.Medium),
+                        textStyle = TextStyle(fontFamily = appFontFamily, fontSize = 12.sp, color = OnSurface, fontWeight = FontWeight.Medium),
                         cursorBrush = SolidColor(Primary),
                         enabled = !isProcessing
                     )
@@ -700,7 +736,7 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                         value = authorName,
                         onValueChange = { authorName = it },
                         modifier = Modifier.fillMaxWidth(),
-                        textStyle = TextStyle(fontSize = 12.sp, color = OnSurface),
+                        textStyle = TextStyle(fontFamily = appFontFamily, fontSize = 12.sp, color = OnSurface),
                         cursorBrush = SolidColor(Primary),
                         enabled = !isProcessing
                     )
