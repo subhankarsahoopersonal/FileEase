@@ -107,6 +107,13 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
     var fontSize by remember { mutableStateOf("12pt") }
     var lineSpacing by remember { mutableStateOf("1.5x") }
 
+    // Layout State (Now Functional)
+    var pageFormat by remember { mutableStateOf("A4 Standard") }
+    var pageFormatExpanded by remember { mutableStateOf(false) }
+
+    var marginSize by remember { mutableStateOf("20mm Normal") }
+    var marginSizeExpanded by remember { mutableStateOf(false) }
+
     // Formatting State
     var pageNumbersEnabled by remember { mutableStateOf(true) }
     var outputFileName by remember { mutableStateOf("Executive_Summary") }
@@ -157,6 +164,7 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                 isEnabled = textContent.isNotBlank(),
                 progress = conversionProgress,
                 currentPage = currentPage,
+                pageFormat = pageFormat,
                 onConvert = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
 
@@ -179,11 +187,25 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
                         try {
                             pdfDocument = PdfDocument()
-                            val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
 
-                            val margin = 56f // ~20mm margins
-                            val usableWidth = 595f - (margin * 2)
-                            val usableHeight = 842f - (margin * 2) - (if (pageNumbersEnabled || authorName.isNotBlank()) 30f else 0f)
+                            // Map Dynamic Page Format
+                            val (pdfWidth, pdfHeight) = when (pageFormat) {
+                                "US Letter" -> 612 to 792
+                                "Legal" -> 612 to 1008
+                                else -> 595 to 842 // A4 Standard
+                            }
+
+                            val pageInfo = PdfDocument.PageInfo.Builder(pdfWidth, pdfHeight, 1).create()
+
+                            // Map Dynamic Margin Size
+                            val margin = when (marginSize) {
+                                "10mm Narrow" -> 28f
+                                "30mm Wide" -> 85f
+                                else -> 56f // 20mm Normal
+                            }
+
+                            val usableWidth = pdfWidth - (margin * 2)
+                            val usableHeight = pdfHeight - (margin * 2) - (if (pageNumbersEnabled || authorName.isNotBlank()) 30f else 0f)
 
                             val textPaint = TextPaint().apply {
                                 isAntiAlias = true
@@ -209,7 +231,6 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                                 else -> 1.5f
                             }
 
-                            // Phase 4: CPU Offloading & Markdown Regex Parsing
                             val staticLayout = withContext(Dispatchers.Default) {
                                 val spannableText = parseMarkdownToSpannable(textContent)
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -235,7 +256,6 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                                 val page = pdfDocument.startPage(pageInfo)
                                 val canvas = page.canvas
 
-                                // Phase 4: Prevent dark-mode transparent canvas bug
                                 canvas.drawColor(android.graphics.Color.WHITE)
 
                                 val startY = staticLayout.getLineTop(currentLine)
@@ -256,7 +276,6 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
                                 pageCount++
 
-                                // Phase 4: Metadata Integration into PDF Footer
                                 if (pageNumbersEnabled || authorName.isNotBlank()) {
                                     val footerPaint = Paint().apply {
                                         textSize = 10f * 1.35f
@@ -269,7 +288,7 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                                         if (pageNumbersEnabled && authorName.isNotBlank()) append("   •   ")
                                         if (pageNumbersEnabled) append("Page $pageCount")
                                     }
-                                    canvas.drawText(footerText, 595f / 2f, 842f - (margin / 1.5f), footerPaint)
+                                    canvas.drawText(footerText, pdfWidth / 2f, pdfHeight - (margin / 1.5f), footerPaint)
                                 }
 
                                 pdfDocument.finishPage(page)
@@ -341,7 +360,6 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                                 snackbarHostState.showSnackbar("Failed to export PDF.")
                             }
                         } finally {
-                            // Phase 4: Guardrail memory protection
                             pdfDocument?.close()
                         }
                     }
@@ -593,21 +611,49 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                // Phase 5: Fully Functional Layout Selectors
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Column(modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).padding(8.dp)) {
-                        Text("Page Format", fontSize = 10.sp, color = OnSurfaceVariant)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text("A4 Standard", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                            Icon(Icons.Outlined.Description, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
+                    Box(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).clickable(enabled = !isProcessing) { pageFormatExpanded = true }.padding(8.dp)
+                        ) {
+                            Text("Page Format", fontSize = 10.sp, color = OnSurfaceVariant)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(pageFormat, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                                Icon(Icons.Outlined.Description, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = pageFormatExpanded,
+                            onDismissRequest = { pageFormatExpanded = false },
+                            modifier = Modifier.background(SurfaceContainerLowest)
+                        ) {
+                            DropdownMenuItem(text = { Text("A4 Standard", color = OnSurface) }, onClick = { pageFormat = "A4 Standard"; pageFormatExpanded = false })
+                            DropdownMenuItem(text = { Text("US Letter", color = OnSurface) }, onClick = { pageFormat = "US Letter"; pageFormatExpanded = false })
+                            DropdownMenuItem(text = { Text("Legal", color = OnSurface) }, onClick = { pageFormat = "Legal"; pageFormatExpanded = false })
                         }
                     }
-                    Column(modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).padding(8.dp)) {
-                        Text("Margin", fontSize = 10.sp, color = OnSurfaceVariant)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text("20mm Normal", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                            Icon(Icons.Outlined.SpaceBar, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
+
+                    Box(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(SurfaceContainerLow).clickable(enabled = !isProcessing) { marginSizeExpanded = true }.padding(8.dp)
+                        ) {
+                            Text("Margin", fontSize = 10.sp, color = OnSurfaceVariant)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(marginSize, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+                                Icon(Icons.Outlined.SpaceBar, contentDescription = null, tint = Primary, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = marginSizeExpanded,
+                            onDismissRequest = { marginSizeExpanded = false },
+                            modifier = Modifier.background(SurfaceContainerLowest)
+                        ) {
+                            DropdownMenuItem(text = { Text("10mm Narrow", color = OnSurface) }, onClick = { marginSize = "10mm Narrow"; marginSizeExpanded = false })
+                            DropdownMenuItem(text = { Text("20mm Normal", color = OnSurface) }, onClick = { marginSize = "20mm Normal"; marginSizeExpanded = false })
+                            DropdownMenuItem(text = { Text("30mm Wide", color = OnSurface) }, onClick = { marginSize = "30mm Wide"; marginSizeExpanded = false })
                         }
                     }
                 }
@@ -707,23 +753,19 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
     }
 }
 
-// Phase 4: Lightweight Native Markdown Parser Helper
 private fun parseMarkdownToSpannable(text: String): SpannableStringBuilder {
     val ssb = SpannableStringBuilder(text)
 
-    // Parse # Header 1
     Regex("(?m)^# (.*)$").findAll(text).forEach { match ->
         ssb.setSpan(RelativeSizeSpan(1.6f), match.range.first, match.range.last + 1, 0)
         ssb.setSpan(StyleSpan(Typeface.BOLD), match.range.first, match.range.last + 1, 0)
     }
 
-    // Parse ## Header 2
     Regex("(?m)^## (.*)$").findAll(text).forEach { match ->
         ssb.setSpan(RelativeSizeSpan(1.3f), match.range.first, match.range.last + 1, 0)
         ssb.setSpan(StyleSpan(Typeface.BOLD), match.range.first, match.range.last + 1, 0)
     }
 
-    // Parse **Bold** Text
     Regex("\\*\\*(.*?)\\*\\*").findAll(text).forEach { match ->
         ssb.setSpan(StyleSpan(Typeface.BOLD), match.range.first, match.range.last + 1, 0)
     }
@@ -842,6 +884,7 @@ private fun TextToPdfBottomBar(
     isEnabled: Boolean,
     progress: Float,
     currentPage: Int,
+    pageFormat: String,
     onConvert: () -> Unit,
     onCancel: () -> Unit,
     onShare: () -> Unit,
@@ -880,7 +923,7 @@ private fun TextToPdfBottomBar(
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("Dynamic pagination & wrapping", fontSize = 10.sp, color = OnSurfaceVariant)
                             }
-                            Text("A4 Document", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary)
+                            Text("$pageFormat Document", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary)
                         }
                         Box(
                             modifier = Modifier
