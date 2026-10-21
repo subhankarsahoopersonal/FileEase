@@ -21,7 +21,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// Exact color tokens from the Stitch HTML Tailwind config
 private val Surface = Color(0xFFFAF8FF)
 private val SurfaceContainerLowest = Color(0xFFFFFFFF)
 private val SurfaceContainerLow = Color(0xFFF2F3FF)
@@ -35,7 +34,8 @@ fun StudioScreen(
     onPdfToImagesClick: () -> Unit = {},
     onJpgToPngClick: () -> Unit = {},
     onTextToPdfClick: () -> Unit = {},
-    onCropImageClick: () -> Unit = {} // <-- INJECTED NEW ROUTE TRIGGER
+    onCropImageClick: () -> Unit = {},
+    onCompressImageClick: () -> Unit = {} // <-- INJECTED COMPRESS TRIGGER
 ) {
     Scaffold(
         containerColor = Surface,
@@ -48,7 +48,6 @@ fun StudioScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
         ) {
-            // Header Section
             Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = "Studio",
@@ -67,7 +66,6 @@ fun StudioScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Section 1: Conversion Tools
             SectionHeader(title = "Conversion Tools")
             Spacer(modifier = Modifier.height(14.dp))
 
@@ -103,7 +101,6 @@ fun StudioScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Section 2: Image Tools
             SectionHeader(title = "Image Tools")
             Spacer(modifier = Modifier.height(14.dp))
 
@@ -112,7 +109,7 @@ fun StudioScreen(
                     modifier = Modifier.weight(1f),
                     title = "Crop Image",
                     icon = Icons.Outlined.Crop,
-                    onClick = onCropImageClick // <-- CONNECTED TO CARD
+                    onClick = onCropImageClick
                 )
                 StudioToolCard(
                     modifier = Modifier.weight(1f),
@@ -127,7 +124,7 @@ fun StudioScreen(
                     modifier = Modifier.weight(1f),
                     title = "Compress Image",
                     icon = Icons.Outlined.Compress,
-                    onClick = { /* Not yet implemented */ }
+                    onClick = onCompressImageClick // <-- CONNECTED TO CARD
                 )
                 StudioToolCard(
                     modifier = Modifier.weight(1f),

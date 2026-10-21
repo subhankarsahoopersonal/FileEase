@@ -33,7 +33,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 
-// 1. Define the tabs for the Bottom Navigation Bar
 sealed class BottomNavItem(val route: String, val title: String, val icon: ImageVector) {
     object Home : BottomNavItem("home", "Home", Icons.Default.Home)
     object Files : BottomNavItem("files", "Files", Icons.Default.Folder)
@@ -41,7 +40,6 @@ sealed class BottomNavItem(val route: String, val title: String, val icon: Image
     object ImageTools : BottomNavItem("image_tools", "Studio", Icons.Default.Image)
 }
 
-// 2. The Master Scaffold that holds the Top Content and the Bottom Bar
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MainScreen() {
@@ -67,7 +65,6 @@ fun MainScreen() {
                 .fillMaxSize()
                 .padding(top = innerPadding.calculateTopPadding())
         ) {
-            // The Router
             NavigationGraph(
                 navController = navController,
                 topLevelRoutes = topLevelRoutes,
@@ -76,7 +73,6 @@ fun MainScreen() {
                     .background(Color(0xFFF8FAFC))
             )
 
-            // The Overlay Bottom Bar
             if (isBottomBarVisible) {
                 Box(modifier = Modifier.align(Alignment.BottomCenter)) {
                     BottomNavigationBar(navController = navController)
@@ -86,7 +82,6 @@ fun MainScreen() {
     }
 }
 
-// 3. The Router (Swaps the screen based on which tab is clicked)
 @Composable
 fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String>, modifier: Modifier) {
     NavHost(
@@ -128,7 +123,6 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
             }
         }
     ) {
-        // TOP LEVEL ROUTES
         composable(BottomNavItem.Home.route) {
             Box(modifier = Modifier.fillMaxSize().padding(bottom = 90.dp)) {
                 HomeDashboardScreen(
@@ -167,12 +161,12 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
                     onPdfToImagesClick = { navController.navigate("pdf_to_images") },
                     onJpgToPngClick = { navController.navigate("jpg_to_png") },
                     onTextToPdfClick = { navController.navigate("text_to_pdf") },
-                    onCropImageClick = { navController.navigate("crop_image") } // <-- INJECTED LAMBDA
+                    onCropImageClick = { navController.navigate("crop_image") },
+                    onCompressImageClick = { navController.navigate("image_compress") } // <-- INJECTED
                 )
             }
         }
 
-        // TOOL ROUTES
         composable("pdf_merge") {
             PdfMergeScreen(onNavigateBack = { navController.popBackStack() })
         }
@@ -203,14 +197,16 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
         composable("text_to_pdf") {
             TextToPdfScreen(onNavigateBack = { navController.popBackStack() })
         }
-        // <-- NEW CROP IMAGE ROUTE ADDED HERE
         composable("crop_image") {
             CropImageScreen(onNavigateBack = { navController.popBackStack() })
+        }
+        // <-- NEW COMPRESS IMAGE ROUTE ADDED HERE
+        composable("image_compress") {
+            CompressImageScreen(onNavigateBack = { navController.popBackStack() })
         }
     }
 }
 
-// 4. The UI for the Bottom Navigation Bar
 @Composable
 fun BottomNavigationBar(navController: NavHostController) {
     val items = listOf(
