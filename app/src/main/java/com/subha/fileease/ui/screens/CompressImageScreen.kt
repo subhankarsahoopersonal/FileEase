@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -167,6 +168,13 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     if (imageUri == null) return@CompressBottomBar
 
+                    // Phase 5: Storage Quota Pre-Flight Check
+                    val usableSpaceMb = Environment.getDataDirectory().usableSpace / (1024 * 1024)
+                    if (usableSpaceMb < estimatedMb + 5) {
+                        coroutineScope.launch { snackbarHostState.showSnackbar("Not enough storage space.") }
+                        return@CompressBottomBar
+                    }
+
                     coroutineScope.launch(Dispatchers.IO) {
                         isProcessing = true
                         var pendingDestUri: Uri? = null
@@ -174,16 +182,49 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
                         try {
                             val targetExt = if (convertWebp) "webp" else "jpg"
                             val targetMime = if (convertWebp) "image/webp" else "image/jpeg"
+
+                            // Phase 5: Lossless WebP integration
                             val compressFormat = if (convertWebp) {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
-                            } else Bitmap.CompressFormat.JPEG
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                    if (targetQuality >= 98f) Bitmap.CompressFormat.WEBP_LOSSLESS else Bitmap.CompressFormat.WEBP_LOSSY
+                                } else {
+                                    Bitmap.CompressFormat.WEBP
+                                }
+                            } else {
+                                Bitmap.CompressFormat.JPEG
+                            }
 
                             val originalName = imageName.substringBeforeLast(".")
                             val finalName = "${originalName}_compressed.$targetExt"
 
-                            val bitmap = context.contentResolver.openInputStream(imageUri!!)?.use {
-                                BitmapFactory.decodeStream(it)
+                            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            context.contentResolver.openInputStream(imageUri!!)?.use { BitmapFactory.decodeStream(it, null, options) }
+
+                            var sampleSize = 1
+                            while (options.outWidth / sampleSize > 4000 || options.outHeight / sampleSize > 4000) { sampleSize *= 2 }
+                            options.inJustDecodeBounds = false
+                            options.inSampleSize = sampleSize
+
+                            val rawBitmap = context.contentResolver.openInputStream(imageUri!!)?.use {
+                                BitmapFactory.decodeStream(it, null, options)
                             } ?: throw Exception("Failed to load source image")
+
+                            val dimensionalScale = when {
+                                targetQuality >= 90f -> 1.0f
+                                targetQuality >= 70f -> 0.75f
+                                else -> 0.5f
+                            }
+
+                            val targetW = (options.outWidth * dimensionalScale).toInt()
+                            val targetH = (options.outHeight * dimensionalScale).toInt()
+
+                            val optimizedBitmap = if (targetW != rawBitmap.width || targetH != rawBitmap.height) {
+                                val scaled = Bitmap.createScaledBitmap(rawBitmap, targetW, targetH, true)
+                                if (scaled != rawBitmap) rawBitmap.recycle()
+                                scaled
+                            } else {
+                                rawBitmap
+                            }
 
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                 val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -195,7 +236,7 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
                                 pendingDestUri = context.contentResolver.insert(collection, details)
                                 pendingDestUri?.let { destUri ->
                                     context.contentResolver.openOutputStream(destUri)?.use { out ->
-                                        bitmap.compress(compressFormat, targetQuality.toInt(), out)
+                                        optimizedBitmap.compress(compressFormat, targetQuality.toInt(), out)
                                     }
                                 }
                             } else {
@@ -204,9 +245,12 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
                                 if (!dir.exists()) dir.mkdirs()
                                 val file = File(dir, finalName)
                                 FileOutputStream(file).use { out ->
-                                    bitmap.compress(compressFormat, targetQuality.toInt(), out)
+                                    optimizedBitmap.compress(compressFormat, targetQuality.toInt(), out)
                                 }
                                 pendingDestUri = Uri.fromFile(file)
+
+                                // Phase 5: MediaScanner Broadcast for instantaneous Gallery Sync
+                                MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf(targetMime), null)
                             }
 
                             if (!stripExif && !convertWebp && pendingDestUri != null) {
@@ -224,7 +268,7 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
                                 } catch (e: Exception) { e.printStackTrace() }
                             }
 
-                            bitmap.recycle()
+                            optimizedBitmap.recycle()
 
                             withContext(Dispatchers.Main) {
                                 isProcessing = false
@@ -237,6 +281,7 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
                                     @Suppress("DEPRECATION")
                                     vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
                                 }
+                                snackbarHostState.showSnackbar("Optimized image saved to gallery.")
                             }
                         } catch (e: Exception) {
                             e.printStackTrace()
@@ -294,7 +339,6 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
         ) {
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Subtitle Callout
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.Top
@@ -311,7 +355,6 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Source Image Card
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -395,7 +438,6 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Telemetry & Estimation Banner
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -446,7 +488,6 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Compression Presets
             Row(modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("Compression Presets", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
                 Text("Pick one or customize below", fontSize = 10.sp, color = OnSurfaceVariant)
@@ -488,7 +529,6 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Interactive Quality Slider
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -534,7 +574,6 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Optimization Toggles
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
