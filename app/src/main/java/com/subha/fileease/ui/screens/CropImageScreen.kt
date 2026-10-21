@@ -17,13 +17,10 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -35,7 +32,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -61,7 +57,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import kotlin.math.roundToInt
 
 // Exact Tailwind Color Tokens
 private val Background = Color(0xFFFAF8FF)
@@ -80,9 +75,7 @@ private val PrimaryContainer = Color(0xFF0066FF)
 private val OnPrimaryContainer = Color(0xFFF8F7FF)
 private val SecondaryContainer = Color(0xFF2170E4)
 private val Outline = Color(0xFF727687)
-private val OutlineVariant = Color(0xFFC2C6D8)
-private val ErrorContainer = Color(0xFFFFDAD6)
-private val Error = Color(0xFFBA1A1A)
+private val OutlineVariant = Color(0xFFC2C6D8) // FIXED: Re-added missing token
 
 @Composable
 fun CropImageScreen(onNavigateBack: () -> Unit) {
@@ -97,6 +90,7 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
     var outputUri by remember { mutableStateOf<Uri?>(null) }
+    var showCropOverlay by remember { mutableStateOf(false) }
 
     // Image Data
     var imageUri by remember { mutableStateOf<Uri?>(null) }
@@ -105,21 +99,6 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
     var imageHeight by remember { mutableIntStateOf(0) }
     var imageSizeMb by remember { mutableFloatStateOf(0f) }
     var imageExtension by remember { mutableStateOf("JPG") }
-
-    // Phase 5: Viewport Math & Rotation State
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
-    var targetAspectRatio by remember { mutableFloatStateOf(1f) }
-    var rotationDegrees by remember { mutableFloatStateOf(0f) }
-    var viewportWidthPx by remember { mutableFloatStateOf(1f) }
-    var viewportHeightPx by remember { mutableFloatStateOf(1f) }
-
-    fun resetViewport() {
-        scale = 1f
-        offsetX = 0f
-        offsetY = 0f
-    }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -151,10 +130,6 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                         imageHeight = options.outHeight
                         imageSizeMb = sizeBytes / (1024f * 1024f)
                         imageExtension = name.substringAfterLast('.', "JPG").uppercase().take(3)
-
-                        resetViewport()
-                        rotationDegrees = 0f
-                        targetAspectRatio = 1f
                         isComplete = false
                         outputUri = null
                     }
@@ -166,284 +141,131 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
         }
     }
 
-    Scaffold(
-        containerColor = Background,
-        topBar = { CropImageTopBar(onNavigateBack) },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        bottomBar = {
-            CropImageBottomBar(
-                isProcessing = isProcessing,
-                isComplete = isComplete,
-                isEnabled = imageUri != null,
-                onConvert = {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    if (imageUri == null) return@CropImageBottomBar
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            containerColor = Background,
+            topBar = { CropImageTopBar(onNavigateBack) },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            bottomBar = {
+                CropImageBottomBar(
+                    isProcessing = isProcessing,
+                    isComplete = isComplete,
+                    isEnabled = imageUri != null,
+                    onConvert = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        if (imageUri == null) return@CropImageBottomBar
 
-                    coroutineScope.launch(Dispatchers.IO) {
-                        isProcessing = true
-                        var pendingDestUri: Uri? = null
+                        coroutineScope.launch(Dispatchers.IO) {
+                            isProcessing = true
+                            var pendingDestUri: Uri? = null
 
-                        try {
-                            // Phase 5: Dynamic Resolution based on Aspect Ratio
-                            val outputBase = 1080f
-                            val outW = if (targetAspectRatio >= 1f) outputBase else outputBase * targetAspectRatio
-                            val outH = if (targetAspectRatio <= 1f) outputBase else outputBase / targetAspectRatio
+                            try {
+                                val originalName = imageName.substringBeforeLast(".")
+                                val finalName = "${originalName}_saved.jpg"
 
-                            val originalName = imageName.substringBeforeLast(".")
-                            val finalName = "${originalName}_cropped.jpg"
+                                val options = BitmapFactory.Options()
+                                var sampleSize = 1
+                                while (imageWidth / sampleSize > 4000 || imageHeight / sampleSize > 4000) { sampleSize *= 2 }
+                                options.inSampleSize = sampleSize
 
-                            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                            context.contentResolver.openInputStream(imageUri!!)?.use { BitmapFactory.decodeStream(it, null, options) }
+                                val bitmap = context.contentResolver.openInputStream(imageUri!!)?.use {
+                                    BitmapFactory.decodeStream(it, null, options)
+                                } ?: throw Exception("Failed to load source image")
 
-                            var sampleSize = 1
-                            while (options.outWidth / sampleSize > 3000 || options.outHeight / sampleSize > 3000) { sampleSize *= 2 }
-                            options.inJustDecodeBounds = false
-                            options.inSampleSize = sampleSize
-
-                            val original = context.contentResolver.openInputStream(imageUri!!)?.use {
-                                BitmapFactory.decodeStream(it, null, options)
-                            } ?: throw Exception("Failed to load source image")
-
-                            // Phase 5: Safe Pre-Rotation Buffer
-                            var activeBitmap = original
-                            if (rotationDegrees % 360f != 0f) {
-                                val rotMatrix = Matrix().apply { postRotate(rotationDegrees) }
-                                activeBitmap = Bitmap.createBitmap(original, 0, 0, original.width, original.height, rotMatrix, true)
-                                if (activeBitmap != original) original.recycle()
-                            }
-
-                            // Native Canvas Coordinate Mapping Engine
-                            val resultBitmap = Bitmap.createBitmap(outW.toInt(), outH.toInt(), Bitmap.Config.ARGB_8888)
-                            val canvas = Canvas(resultBitmap)
-                            val matrix = Matrix()
-
-                            // Base ContentScale.Crop mapping
-                            val scaleToFill = maxOf(outW / activeBitmap.width, outH / activeBitmap.height)
-                            matrix.postTranslate((outW - activeBitmap.width) / 2f, (outH - activeBitmap.height) / 2f)
-                            matrix.postScale(scaleToFill, scaleToFill, outW / 2f, outH / 2f)
-
-                            // Map user gestures from UI viewport to canvas
-                            val transformScaleMultiplierX = outW / viewportWidthPx
-                            val transformScaleMultiplierY = outH / viewportHeightPx
-
-                            matrix.postScale(scale, scale, outW / 2f, outH / 2f)
-                            matrix.postTranslate(offsetX * transformScaleMultiplierX, offsetY * transformScaleMultiplierY)
-
-                            canvas.drawBitmap(activeBitmap, matrix, Paint(Paint.FILTER_BITMAP_FLAG))
-
-                            // Save to Storage
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                                val details = ContentValues().apply {
-                                    put(MediaStore.Images.Media.DISPLAY_NAME, finalName)
-                                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FileEase")
-                                }
-                                pendingDestUri = context.contentResolver.insert(collection, details)
-                                pendingDestUri?.let { destUri ->
-                                    context.contentResolver.openOutputStream(destUri)?.use { out ->
-                                        resultBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                    val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                                    val details = ContentValues().apply {
+                                        put(MediaStore.Images.Media.DISPLAY_NAME, finalName)
+                                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                                        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FileEase")
                                     }
-                                }
-                            } else {
-                                @Suppress("DEPRECATION")
-                                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "FileEase")
-                                if (!dir.exists()) dir.mkdirs()
-                                val file = File(dir, finalName)
-                                FileOutputStream(file).use { out ->
-                                    resultBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-                                }
-                                pendingDestUri = Uri.fromFile(file)
-                            }
-
-                            activeBitmap.recycle()
-                            resultBitmap.recycle()
-
-                            withContext(Dispatchers.Main) {
-                                isProcessing = false
-                                isComplete = true
-                                outputUri = pendingDestUri
-
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
+                                    pendingDestUri = context.contentResolver.insert(collection, details)
+                                    pendingDestUri?.let { destUri ->
+                                        context.contentResolver.openOutputStream(destUri)?.use { out ->
+                                            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+                                        }
+                                    }
                                 } else {
                                     @Suppress("DEPRECATION")
-                                    vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                    val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "FileEase")
+                                    if (!dir.exists()) dir.mkdirs()
+                                    val file = File(dir, finalName)
+                                    FileOutputStream(file).use { out ->
+                                        bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+                                    }
+                                    pendingDestUri = Uri.fromFile(file)
+                                }
+
+                                bitmap.recycle()
+
+                                withContext(Dispatchers.Main) {
+                                    isProcessing = false
+                                    isComplete = true
+                                    outputUri = pendingDestUri
+
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
+                                    } else {
+                                        @Suppress("DEPRECATION")
+                                        vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
+                                withContext(Dispatchers.Main) {
+                                    isProcessing = false
+                                    snackbarHostState.showSnackbar("Failed to save image.")
                                 }
                             }
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                            pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
-                            withContext(Dispatchers.Main) {
-                                isProcessing = false
-                                snackbarHostState.showSnackbar("Failed to crop image.")
+                        }
+                    },
+                    onShare = {
+                        outputUri?.let { uri ->
+                            try {
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "image/jpeg"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "Share Image"))
+                            } catch (e: Exception) {
+                                coroutineScope.launch { snackbarHostState.showSnackbar("Error launching share sheet.") }
                             }
                         }
-                    }
-                },
-                onShare = {
-                    outputUri?.let { uri ->
-                        try {
-                            val intent = Intent(Intent.ACTION_SEND).apply {
-                                type = "image/jpeg"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    },
+                    onOpen = {
+                        outputUri?.let { uri ->
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW).apply {
+                                    setDataAndType(uri, "image/jpeg")
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "Open Image"))
+                            } catch (e: Exception) {
+                                coroutineScope.launch { snackbarHostState.showSnackbar("No gallery app installed.") }
                             }
-                            context.startActivity(Intent.createChooser(intent, "Share Image"))
-                        } catch (e: Exception) {
-                            coroutineScope.launch { snackbarHostState.showSnackbar("Error launching share sheet.") }
                         }
+                    },
+                    onReset = {
+                        isComplete = false
+                        outputUri = null
+                        imageUri = null
                     }
-                },
-                onOpen = {
-                    outputUri?.let { uri ->
-                        try {
-                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, "image/jpeg")
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            context.startActivity(Intent.createChooser(intent, "Open Image"))
-                        } catch (e: Exception) {
-                            coroutineScope.launch { snackbarHostState.showSnackbar("No gallery app installed.") }
-                        }
-                    }
-                },
-                onReset = {
-                    isComplete = false
-                    outputUri = null
-                    imageUri = null
-                }
-            )
-        },
-        contentWindowInsets = WindowInsets(0.dp)
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .verticalScroll(scrollState)
-                .padding(horizontal = 16.dp)
-        ) {
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Subtitle Callout
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.Top
-            ) {
-                Box(modifier = Modifier.size(28.dp).clip(CircleShape).background(SurfaceContainerHigh).shadow(1.dp), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.Crop, contentDescription = null, tint = Primary, modifier = Modifier.size(17.dp))
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text("Visual Framing", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                    Text("Adjust boundaries, pan, and zoom to cleanly re-frame your photo on-device.", fontSize = 12.sp, color = OnSurfaceVariant)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Source Image Card
+                )
+            },
+            contentWindowInsets = WindowInsets(0.dp)
+        ) { innerPadding ->
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(1.dp, RoundedCornerShape(12.dp))
-                    .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
-                    .padding(16.dp)
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .verticalScroll(scrollState)
+                    .padding(horizontal = 16.dp)
             ) {
-                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("SOURCE FILE", fontSize = 10.sp, color = OnSurfaceVariant, letterSpacing = 0.5.sp, fontWeight = FontWeight.Medium)
-                    if (imageUri != null) {
-                        Row(
-                            modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainer).padding(horizontal = 8.dp, vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(SecondaryContainer))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Ready", fontSize = 10.sp, color = OnSurfaceVariant)
-                        }
-                    }
-                }
+                Spacer(modifier = Modifier.height(16.dp))
 
-                if (imageUri != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainer)) {
-                            AsyncImage(
-                                model = imageUri,
-                                contentDescription = "Source Image",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                            Box(modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp).clip(RoundedCornerShape(4.dp)).background(InverseSurface.copy(alpha = 0.85f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                                Text(imageExtension, fontSize = 9.sp, fontWeight = FontWeight.Medium, color = InverseOnSurface)
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(imageName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("$imageWidth × $imageHeight px", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
-                            Row(modifier = Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(SurfaceContainer).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                    Text("%.1f MB".format(imageSizeMb), fontSize = 11.sp, color = OnSurface)
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SurfaceContainer)
-                                .clickable(enabled = !isProcessing) {
-                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    imagePickerLauncher.launch("image/*")
-                                }
-                                .alpha(if (isProcessing) 0.5f else 1f)
-                                .padding(horizontal = 12.dp, vertical = 8.dp)
-                        ) {
-                            Text("Change", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Primary)
-                        }
-                    }
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(84.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(SurfaceContainerLow)
-                            .clickable {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                imagePickerLauncher.launch("image/*")
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Outlined.AddPhotoAlternate, contentDescription = null, tint = Primary)
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("Tap to browse gallery", fontSize = 13.sp, color = Outline, fontWeight = FontWeight.Medium)
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Interactive Crop Viewport
-            if (imageUri != null) {
-                Row(modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Interactive Editor", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                    Row(
-                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = !isProcessing) {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            resetViewport()
-                        }.alpha(if (isProcessing) 0.5f else 1f).padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Outlined.RestartAlt, contentDescription = null, tint = Primary, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Reset Framing", fontSize = 11.sp, color = Primary, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-
+                // Source Image Card
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -451,93 +273,313 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                         .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
                         .padding(16.dp)
                 ) {
-                    BoxWithConstraints(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(targetAspectRatio)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(InverseSurface)
-                            .pointerInput(targetAspectRatio, rotationDegrees) {
-                                detectTransformGestures { _, pan, zoom, _ ->
-                                    if (isProcessing) return@detectTransformGestures
-                                    scale = (scale * zoom).coerceIn(1f, 5f)
-                                    val maxOffsetX = (viewportWidthPx * scale - viewportWidthPx) / 2f
-                                    val maxOffsetY = (viewportHeightPx * scale - viewportHeightPx) / 2f
-                                    offsetX = (offsetX + pan.x).coerceIn(-maxOffsetX, maxOffsetX)
-                                    offsetY = (offsetY + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
-                                }
-                            }
-                    ) {
-                        viewportWidthPx = constraints.maxWidth.toFloat()
-                        viewportHeightPx = constraints.maxHeight.toFloat()
-
-                        AsyncImage(
-                            model = imageUri,
-                            contentDescription = "Viewport",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer(
-                                    rotationZ = rotationDegrees,
-                                    scaleX = scale,
-                                    scaleY = scale,
-                                    translationX = offsetX,
-                                    translationY = offsetY
-                                )
-                        )
-
-                        // Pro 3x3 Grid Overlay
-                        Box(modifier = Modifier.fillMaxSize().border(1.dp, Color.White.copy(alpha=0.5f), RoundedCornerShape(8.dp))) {
-                            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
-                                Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha=0.3f)))
-                                Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha=0.3f)))
-                            }
-                            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                                Box(Modifier.fillMaxHeight().width(1.dp).background(Color.White.copy(alpha=0.3f)))
-                                Box(Modifier.fillMaxHeight().width(1.dp).background(Color.White.copy(alpha=0.3f)))
+                    Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("SOURCE FILE", fontSize = 10.sp, color = OnSurfaceVariant, letterSpacing = 0.5.sp, fontWeight = FontWeight.Medium)
+                        if (imageUri != null) {
+                            Row(
+                                modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainer).padding(horizontal = 8.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(SecondaryContainer))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Ready", fontSize = 10.sp, color = OnSurfaceVariant)
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    if (imageUri != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(modifier = Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainer)) {
+                                AsyncImage(
+                                    model = imageUri,
+                                    contentDescription = "Source Image",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                Box(modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp).clip(RoundedCornerShape(4.dp)).background(InverseSurface.copy(alpha = 0.85f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
+                                    Text(imageExtension, fontSize = 9.sp, fontWeight = FontWeight.Medium, color = InverseOnSurface)
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(imageName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("$imageWidth × $imageHeight px", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+                                Row(modifier = Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(SurfaceContainer).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                                        Text("%.1f MB".format(imageSizeMb), fontSize = 11.sp, color = OnSurface)
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
 
-                    // Phase 5: Aspect Ratio & Rotation Segmented Controls
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            RatioChip("1:1", targetAspectRatio == 1f, !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 1f; resetViewport() }
-                            RatioChip("4:3", targetAspectRatio == 4f/3f, !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 4f/3f; resetViewport() }
-                            RatioChip("16:9", targetAspectRatio == 16f/9f, !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 16f/9f; resetViewport() }
-                            RatioChip("3:4", targetAspectRatio == 3f/4f, !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 3f/4f; resetViewport() }
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(PrimaryContainer)
+                                        .clickable(enabled = !isProcessing) {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            showCropOverlay = true
+                                        }
+                                        .alpha(if (isProcessing) 0.5f else 1f)
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("Crop", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(SurfaceContainer)
+                                        .clickable(enabled = !isProcessing) {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            imagePickerLauncher.launch("image/*")
+                                        }
+                                        .alpha(if (isProcessing) 0.5f else 1f)
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("Change", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Primary)
+                                }
+                            }
                         }
-
+                    } else {
                         Box(
                             modifier = Modifier
-                                .clip(CircleShape)
-                                .background(SurfaceContainerHigh)
-                                .clickable(enabled = !isProcessing) {
+                                .fillMaxWidth()
+                                .height(84.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(SurfaceContainerLow)
+                                .clickable {
                                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    rotationDegrees += 90f
-                                    resetViewport()
-                                }
-                                .alpha(if (isProcessing) 0.5f else 1f)
-                                .padding(8.dp),
+                                    imagePickerLauncher.launch("image/*")
+                                },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Outlined.RotateRight, contentDescription = "Rotate 90", tint = Primary, modifier = Modifier.size(16.dp))
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Outlined.AddPhotoAlternate, contentDescription = null, tint = Primary)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Tap to browse gallery", fontSize = 13.sp, color = Outline, fontWeight = FontWeight.Medium)
+                            }
                         }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(120.dp))
+                Spacer(modifier = Modifier.height(120.dp))
+            }
+        }
+
+        // Interactive Crop Overlay
+        AnimatedVisibility(
+            visible = showCropOverlay,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            if (imageUri != null) {
+                CropEditorOverlay(
+                    imageUri = imageUri!!,
+                    onDismiss = { showCropOverlay = false },
+                    onCropApplied = { newUri, newSizeMb, newW, newH ->
+                        imageUri = newUri
+                        imageSizeMb = newSizeMb
+                        imageWidth = newW
+                        imageHeight = newH
+                        showCropOverlay = false
+                        imageName = "Cropped_${imageName}"
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CropEditorOverlay(
+    imageUri: Uri,
+    onDismiss: () -> Unit,
+    onCropApplied: (Uri, Float, Int, Int) -> Unit
+) {
+    val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
+    val coroutineScope = rememberCoroutineScope()
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
+    var isCropping by remember { mutableStateOf(false) }
+
+    var targetAspectRatio by remember { mutableFloatStateOf(1f) }
+    var rotationDegrees by remember { mutableFloatStateOf(0f) }
+    var viewportWidthPx by remember { mutableFloatStateOf(1f) }
+    var viewportHeightPx by remember { mutableFloatStateOf(1f) }
+
+    fun resetViewport() {
+        scale = 1f
+        offsetX = 0f
+        offsetY = 0f
+    }
+
+    fun applyCropMatrix() {
+        isCropping = true
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                val outputBase = 1080f
+                val outW = if (targetAspectRatio >= 1f) outputBase else outputBase * targetAspectRatio
+                val outH = if (targetAspectRatio <= 1f) outputBase else outputBase / targetAspectRatio
+
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                context.contentResolver.openInputStream(imageUri)?.use { BitmapFactory.decodeStream(it, null, options) }
+
+                var sampleSize = 1
+                while (options.outWidth / sampleSize > 3000 || options.outHeight / sampleSize > 3000) { sampleSize *= 2 }
+                options.inJustDecodeBounds = false
+                options.inSampleSize = sampleSize
+
+                val original = context.contentResolver.openInputStream(imageUri)?.use {
+                    BitmapFactory.decodeStream(it, null, options)
+                } ?: throw Exception("Failed to load bitmap")
+
+                var activeBitmap = original
+                if (rotationDegrees % 360f != 0f) {
+                    val rotMatrix = Matrix().apply { postRotate(rotationDegrees) }
+                    activeBitmap = Bitmap.createBitmap(original, 0, 0, original.width, original.height, rotMatrix, true)
+                    if (activeBitmap != original) original.recycle()
+                }
+
+                val resultBitmap = Bitmap.createBitmap(outW.toInt(), outH.toInt(), Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(resultBitmap)
+                val matrix = Matrix()
+
+                val scaleToFill = maxOf(outW / activeBitmap.width, outH / activeBitmap.height)
+                matrix.postTranslate((outW - activeBitmap.width) / 2f, (outH - activeBitmap.height) / 2f)
+                matrix.postScale(scaleToFill, scaleToFill, outW / 2f, outH / 2f)
+
+                val transformScaleMultiplierX = outW / viewportWidthPx
+                val transformScaleMultiplierY = outH / viewportHeightPx
+
+                matrix.postScale(scale, scale, outW / 2f, outH / 2f)
+                matrix.postTranslate(offsetX * transformScaleMultiplierX, offsetY * transformScaleMultiplierY)
+
+                canvas.drawBitmap(activeBitmap, matrix, Paint(Paint.FILTER_BITMAP_FLAG))
+
+                val cacheFile = File(context.cacheDir, "crop_${System.currentTimeMillis()}.jpg")
+                FileOutputStream(cacheFile).use { out ->
+                    resultBitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+                }
+
+                activeBitmap.recycle()
+                resultBitmap.recycle()
+
+                val newUri = Uri.fromFile(cacheFile)
+                val newSizeMb = cacheFile.length() / (1024f * 1024f)
+
+                withContext(Dispatchers.Main) {
+                    onCropApplied(newUri, newSizeMb, outW.toInt(), outH.toInt())
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) { isCropping = false }
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { }
+    ) {
+        Row(modifier = Modifier.fillMaxWidth().padding(16.dp).statusBarsPadding(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Cancel", tint = Color.White) }
+            Text("Crop Photo", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            IconButton(onClick = { applyCropMatrix() }, enabled = !isCropping) {
+                Icon(Icons.Outlined.Check, contentDescription = "Save", tint = PrimaryContainer)
+            }
+        }
+
+        Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(targetAspectRatio)
+                    .clip(RoundedCornerShape(4.dp))
+                    .pointerInput(targetAspectRatio, rotationDegrees) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            if (isCropping) return@detectTransformGestures
+                            scale = (scale * zoom).coerceIn(1f, 5f)
+                            val maxOffsetX = (viewportWidthPx * scale - viewportWidthPx) / 2f
+                            val maxOffsetY = (viewportHeightPx * scale - viewportHeightPx) / 2f
+                            offsetX = (offsetX + pan.x).coerceIn(-maxOffsetX, maxOffsetX)
+                            offsetY = (offsetY + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
+                        }
+                    }
+            ) {
+                viewportWidthPx = constraints.maxWidth.toFloat()
+                viewportHeightPx = constraints.maxHeight.toFloat()
+
+                AsyncImage(
+                    model = imageUri,
+                    contentDescription = "Viewport",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(
+                            rotationZ = rotationDegrees,
+                            scaleX = scale,
+                            scaleY = scale,
+                            translationX = offsetX,
+                            translationY = offsetY
+                        )
+                )
+
+                Box(modifier = Modifier.fillMaxSize().border(1.dp, Color.White.copy(alpha=0.5f), RoundedCornerShape(4.dp))) {
+                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha=0.3f)))
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha=0.3f)))
+                    }
+                    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        Box(Modifier.fillMaxHeight().width(1.dp).background(Color.White.copy(alpha=0.3f)))
+                        Box(Modifier.fillMaxHeight().width(1.dp).background(Color.White.copy(alpha=0.3f)))
+                    }
+                }
+            }
+        }
+
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp).navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (isCropping) {
+                CircularProgressIndicator(color = PrimaryContainer)
+                Spacer(modifier = Modifier.height(16.dp))
+            } else {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RatioChip("1:1", targetAspectRatio == 1f, !isCropping) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 1f; resetViewport() }
+                        RatioChip("4:3", targetAspectRatio == 4f/3f, !isCropping) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 4f/3f; resetViewport() }
+                        RatioChip("16:9", targetAspectRatio == 16f/9f, !isCropping) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 16f/9f; resetViewport() }
+                        RatioChip("3:4", targetAspectRatio == 3f/4f, !isCropping) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 3f/4f; resetViewport() }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha=0.15f))
+                            .clickable(enabled = !isCropping) {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                rotationDegrees += 90f
+                                resetViewport()
+                            }
+                            .padding(8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Outlined.RotateRight, contentDescription = "Rotate", tint = Color.White, modifier = Modifier.size(16.dp))
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Pinch to zoom, drag to pan.", color = Color.White.copy(alpha=0.6f), fontSize = 13.sp)
+            }
         }
     }
 }
 
 @Composable
 private fun RatioChip(label: String, isSelected: Boolean, isEnabled: Boolean, onClick: () -> Unit) {
-    val bg = if (isSelected) PrimaryContainer else SurfaceContainerHigh
-    val textCol = if (isSelected) OnPrimaryContainer else OnSurfaceVariant
+    val bg = if (isSelected) PrimaryContainer else Color.White.copy(alpha=0.15f)
+    val textCol = if (isSelected) OnPrimaryContainer else Color.White
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
@@ -552,38 +594,22 @@ private fun RatioChip(label: String, isSelected: Boolean, isEnabled: Boolean, on
 
 @Composable
 private fun CropImageTopBar(onNavigateBack: () -> Unit) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val alphaPulse by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 0.3f,
-        animationSpec = infiniteRepeatable(tween(800, easing = FastOutLinearInEasing), RepeatMode.Reverse), label = "alphaPulse"
-    )
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Surface.copy(alpha = 0.90f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
             .padding(horizontal = 16.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(
-                modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Column {
-                Text("Crop Image", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerHigh.copy(alpha=0.6f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(PrimaryContainer).alpha(alphaPulse))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Offline Engine Active • 100% On-device", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = OnSurfaceVariant)
-                }
-            }
+        Box(
+            modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
+        Spacer(modifier = Modifier.width(4.dp))
+        Text("Crop Image", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
     }
 }
 
@@ -637,11 +663,11 @@ private fun CropImageBottomBar(
                                     if (processing) {
                                         CircularProgressIndicator(color = contentColor, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text("Extracting Matrix...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                                        Text("Saving Output...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                                     } else {
-                                        Icon(Icons.Outlined.Crop, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
+                                        Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text("Crop & Save Image", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                                        Text("Save Image", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                                     }
                                 }
                             }
