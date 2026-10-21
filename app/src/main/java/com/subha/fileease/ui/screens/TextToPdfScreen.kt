@@ -103,10 +103,8 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
     val charCount = textContent.length
     val wordCount = if (textContent.isBlank()) 0 else textContent.split("\\s+".toRegex()).size
 
-    // Pull the app's global font family to fix the generic font issue
     val appFontFamily = MaterialTheme.typography.bodyMedium.fontFamily
 
-    // Unified Text Style to ensure perfect alignment
     val editorTextStyle = TextStyle(
         fontFamily = appFontFamily,
         fontSize = 13.sp,
@@ -424,32 +422,6 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                 .verticalScroll(scrollState)
                 .padding(horizontal = 16.dp)
         ) {
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Subtitle Banner
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(1.dp, RoundedCornerShape(12.dp))
-                    .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
-            ) {
-                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                    Text("Convert plain text, notes, and markdown into formatted PDF files", fontSize = 13.sp, color = OnSurface, lineHeight = 18.sp)
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Bolt, contentDescription = null, tint = Primary, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Zero cloud latency • Instant client-side render", fontSize = 10.sp, color = Primary, fontWeight = FontWeight.Medium)
-                    }
-                }
-                Box(modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(SurfaceContainer), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = Primary, modifier = Modifier.size(22.dp))
-                }
-            }
-
             Spacer(modifier = Modifier.height(16.dp))
 
             // Input Mode Segment Selector
@@ -546,12 +518,11 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
                                 for (i in 0 until textLayoutResult.lineCount) {
                                     val startOffset = textLayoutResult.getLineStart(i)
-                                    // Identify logical vs wrapped lines
                                     if (startOffset == 0 || (startOffset > 0 && textContent.getOrNull(startOffset - 1) == '\n')) {
                                         builder.append(currentLogicalLine).append("\n")
                                         currentLogicalLine++
                                     } else {
-                                        builder.append("\n") // Insert blank line for wrapped text
+                                        builder.append("\n")
                                     }
                                 }
 
