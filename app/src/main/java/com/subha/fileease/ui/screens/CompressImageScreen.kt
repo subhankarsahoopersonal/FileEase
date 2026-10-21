@@ -18,12 +18,6 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -168,7 +162,6 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     if (imageUri == null) return@CompressBottomBar
 
-                    // Phase 5: Storage Quota Pre-Flight Check
                     val usableSpaceMb = Environment.getDataDirectory().usableSpace / (1024 * 1024)
                     if (usableSpaceMb < estimatedMb + 5) {
                         coroutineScope.launch { snackbarHostState.showSnackbar("Not enough storage space.") }
@@ -183,7 +176,6 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
                             val targetExt = if (convertWebp) "webp" else "jpg"
                             val targetMime = if (convertWebp) "image/webp" else "image/jpeg"
 
-                            // Phase 5: Lossless WebP integration
                             val compressFormat = if (convertWebp) {
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                                     if (targetQuality >= 98f) Bitmap.CompressFormat.WEBP_LOSSLESS else Bitmap.CompressFormat.WEBP_LOSSY
@@ -249,7 +241,6 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
                                 }
                                 pendingDestUri = Uri.fromFile(file)
 
-                                // Phase 5: MediaScanner Broadcast for instantaneous Gallery Sync
                                 MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf(targetMime), null)
                             }
 
@@ -337,24 +328,9 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
                 .verticalScroll(scrollState)
                 .padding(horizontal = 16.dp)
         ) {
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.Top
-            ) {
-                Box(modifier = Modifier.size(28.dp).clip(CircleShape).background(SurfaceContainerHigh).shadow(1.dp), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.AutoFixHigh, contentDescription = null, tint = Primary, modifier = Modifier.size(17.dp))
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text("Precision Compression", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                    Text("Reduce photo file weight while preserving optical visual clarity on-device.", fontSize = 12.sp, color = OnSurfaceVariant)
-                }
-            }
-
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Source Image Card
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -438,6 +414,7 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Telemetry & Estimation Banner
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -488,6 +465,7 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Compression Presets
             Row(modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("Compression Presets", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
                 Text("Pick one or customize below", fontSize = 10.sp, color = OnSurfaceVariant)
@@ -529,6 +507,7 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Interactive Quality Slider
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -574,6 +553,7 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Optimization Toggles
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -702,38 +682,22 @@ private fun CompressCustomSwitch(checked: Boolean, isEnabled: Boolean = true, on
 
 @Composable
 private fun CompressTopBar(onNavigateBack: () -> Unit) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val alphaPulse by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 0.3f,
-        animationSpec = infiniteRepeatable(tween(800, easing = FastOutLinearInEasing), RepeatMode.Reverse), label = "alphaPulse"
-    )
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Surface.copy(alpha = 0.90f))
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
             .padding(horizontal = 16.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(
-                modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Column {
-                Text("Compress Image", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerHigh.copy(alpha=0.6f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(PrimaryContainer).alpha(alphaPulse))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Offline Engine Active • 100% On-device", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = OnSurfaceVariant)
-                }
-            }
+        Box(
+            modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
+        Spacer(modifier = Modifier.width(4.dp))
+        Text("Compress Image", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
     }
 }
 
