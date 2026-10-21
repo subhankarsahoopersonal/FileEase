@@ -97,7 +97,7 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
     var inputMode by remember { mutableStateOf("paste") }
 
     // Editor State
-    var textContent by remember { mutableStateOf("# Project Executive Summary\nDate: Oct 24, 2024\nLead: FileEase Engineering Core\n\n1. Project Scope & Milestones\n- Native client-side document processing engine\n- Sub-50ms PDF assembly via Vector Streams\n- Complete offline privacy preservation architecture\n\n2. Key Deliverables\nReady-to-sign formatted brief exported for internal distribution.") }
+    var textContent by remember { mutableStateOf("") }
     val charCount = textContent.length
     val wordCount = if (textContent.isBlank()) 0 else textContent.split("\\s+".toRegex()).size
     val lineCount = textContent.lines().size
@@ -107,7 +107,7 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
     var fontSize by remember { mutableStateOf("12pt") }
     var lineSpacing by remember { mutableStateOf("1.5x") }
 
-    // Layout State (Now Functional)
+    // Layout State
     var pageFormat by remember { mutableStateOf("A4 Standard") }
     var pageFormatExpanded by remember { mutableStateOf(false) }
 
@@ -188,7 +188,6 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                         try {
                             pdfDocument = PdfDocument()
 
-                            // Map Dynamic Page Format
                             val (pdfWidth, pdfHeight) = when (pageFormat) {
                                 "US Letter" -> 612 to 792
                                 "Legal" -> 612 to 1008
@@ -197,7 +196,6 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
                             val pageInfo = PdfDocument.PageInfo.Builder(pdfWidth, pdfHeight, 1).create()
 
-                            // Map Dynamic Margin Size
                             val margin = when (marginSize) {
                                 "10mm Narrow" -> 28f
                                 "30mm Wide" -> 85f
@@ -535,23 +533,10 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Primary, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Auto-synced to previewer", fontSize = 10.sp, color = OnSurfaceVariant)
-                        }
-                        Row(
-                            modifier = Modifier.clickable(enabled = !isProcessing) {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                textContent = "# Project Executive Summary\nDate: Oct 24, 2024\nLead: FileEase Engineering Core\n\n1. Project Scope & Milestones\n- Native client-side document processing engine\n- Sub-50ms PDF assembly via Vector Streams\n- Complete offline privacy preservation architecture\n\n2. Key Deliverables\nReady-to-sign formatted brief exported for internal distribution."
-                            }.alpha(if (isProcessing) 0.5f else 1f),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Outlined.Refresh, contentDescription = null, tint = Secondary, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Reset sample", fontSize = 10.sp, color = Secondary)
-                        }
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Primary, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Auto-synced to previewer", fontSize = 10.sp, color = OnSurfaceVariant)
                     }
                 }
             }
@@ -611,7 +596,6 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Phase 5: Fully Functional Layout Selectors
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(modifier = Modifier.weight(1f)) {
                         Column(
