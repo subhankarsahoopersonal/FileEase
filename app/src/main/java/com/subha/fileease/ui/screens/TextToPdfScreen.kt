@@ -20,6 +20,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -74,6 +75,7 @@ private val OnSurfaceVariant = Color(0xFF424656)
 private val Primary = Color(0xFF0050CB)
 private val OnPrimary = Color(0xFFFFFFFF)
 private val PrimaryContainer = Color(0xFF0066FF)
+// FIX: Added the missing OnPrimaryContainer token
 private val OnPrimaryContainer = Color(0xFFF8F7FF)
 private val Secondary = Color(0xFF0058BE)
 private val Outline = Color(0xFF727687)
@@ -109,13 +111,15 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
     var outputFileName by remember { mutableStateOf("Executive_Summary") }
     var authorName by remember { mutableStateOf("FileEase User") }
 
-    // Export State
+    // Export & Progress State
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
     var outputUri by remember { mutableStateOf<Uri?>(null) }
 
     var conversionJob by remember { mutableStateOf<Job?>(null) }
     var isCancelling by remember { mutableStateOf(false) }
+    var conversionProgress by remember { mutableFloatStateOf(0f) }
+    var currentPage by remember { mutableIntStateOf(0) }
 
     // Text File Import Launcher
     val textPickerLauncher = rememberLauncherForActivityResult(
@@ -151,16 +155,32 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                 isCancelling = isCancelling,
                 isComplete = isComplete,
                 isEnabled = textContent.isNotBlank(),
+                progress = conversionProgress,
+                currentPage = currentPage,
                 onConvert = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+
+                    // Phase 3: Storage Quota Verification
+                    val usableSpaceMb = Environment.getDataDirectory().usableSpace / (1024 * 1024)
+                    if (usableSpaceMb < 5) {
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("Not enough storage space. Please free up at least 5MB.")
+                        }
+                        return@TextToPdfBottomBar
+                    }
 
                     conversionJob = coroutineScope.launch(Dispatchers.IO) {
                         isProcessing = true
                         isCancelling = false
+                        conversionProgress = 0f
+                        currentPage = 0
+
+                        var pendingDestUri: Uri? = null
+                        var pdfDocument: PdfDocument? = null
 
                         try {
                             // 1. PDF Architecture Setup (A4 Size: 595 x 842 points)
-                            val pdfDocument = PdfDocument()
+                            pdfDocument = PdfDocument()
                             val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
 
                             val margin = 56f // ~20mm margins
@@ -172,14 +192,12 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                                 isAntiAlias = true
                                 color = android.graphics.Color.BLACK
 
-                                // Map Font Family
                                 typeface = when (fontFamily) {
                                     "Serif" -> Typeface.SERIF
                                     "Monospace" -> Typeface.MONOSPACE
                                     else -> Typeface.SANS_SERIF
                                 }
 
-                                // Map Font Size (Scaled to PDF Points)
                                 textSize = when (fontSize) {
                                     "10pt" -> 10f
                                     "14pt" -> 14f
@@ -194,21 +212,23 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                                 else -> 1.5f
                             }
 
-                            // 3. Build StaticLayout for automatic line-wrapping calculations
-                            val staticLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                StaticLayout.Builder.obtain(textContent, 0, textContent.length, textPaint, usableWidth.toInt())
-                                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                                    .setLineSpacing(0f, spacingMult)
-                                    .setIncludePad(false)
-                                    .build()
-                            } else {
-                                @Suppress("DEPRECATION")
-                                StaticLayout(textContent, textPaint, usableWidth.toInt(), Layout.Alignment.ALIGN_NORMAL, spacingMult, 0f, false)
+                            // 3. Phase 3: CPU Thread Offloading for StaticLayout to prevent UI Jank
+                            val staticLayout = withContext(Dispatchers.Default) {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                    StaticLayout.Builder.obtain(textContent, 0, textContent.length, textPaint, usableWidth.toInt())
+                                        .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                                        .setLineSpacing(0f, spacingMult)
+                                        .setIncludePad(false)
+                                        .build()
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    StaticLayout(textContent, textPaint, usableWidth.toInt(), Layout.Alignment.ALIGN_NORMAL, spacingMult, 0f, false)
+                                }
                             }
 
                             if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled")
 
-                            // 4. Pagination Engine (Splits wrapped lines across multiple pages dynamically)
+                            // 4. Pagination Engine (Deterministic Stream Writing)
                             val totalLines = staticLayout.lineCount
                             var currentLine = 0
                             var pageCount = 0
@@ -221,13 +241,13 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                                 val startY = staticLayout.getLineTop(currentLine)
                                 var linesToDraw = 0
 
-                                // Calculate how many lines fit on this specific page
+                                // Calculate lines for this page
                                 while (currentLine + linesToDraw < totalLines) {
                                     val lineBottom = staticLayout.getLineBottom(currentLine + linesToDraw)
                                     if (lineBottom - startY > usableHeight) break
                                     linesToDraw++
                                 }
-                                if (linesToDraw == 0) linesToDraw = 1 // Guarantee forward progress
+                                if (linesToDraw == 0) linesToDraw = 1
 
                                 // Draw Content
                                 canvas.save()
@@ -251,11 +271,16 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
 
                                 pdfDocument.finishPage(page)
                                 currentLine += linesToDraw
+
+                                // Phase 3: Real-time UI Progress bridging
+                                withContext(Dispatchers.Main) {
+                                    conversionProgress = currentLine.toFloat() / totalLines.toFloat()
+                                    currentPage = pageCount
+                                }
                             }
 
                             // 5. Scoped Storage MediaStore Export (Downloads Folder)
                             val finalName = if (outputFileName.endsWith(".pdf", ignoreCase = true)) outputFileName else "$outputFileName.pdf"
-                            var destUri: Uri? = null
 
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                 val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -264,27 +289,34 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                                     put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
                                     put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/FileEase")
                                 }
-                                destUri = context.contentResolver.insert(collection, details)
-                                destUri?.let { uri ->
-                                    context.contentResolver.openOutputStream(uri)?.use { out -> pdfDocument.writeTo(out) }
+                                pendingDestUri = context.contentResolver.insert(collection, details)
+                                pendingDestUri?.let { uri ->
+                                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                                        if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled by user")
+                                        pdfDocument.writeTo(out)
+                                    }
                                 }
                             } else {
                                 @Suppress("DEPRECATION")
                                 val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "FileEase")
                                 if (!dir.exists()) dir.mkdirs()
                                 val file = File(dir, finalName)
-                                FileOutputStream(file).use { out -> pdfDocument.writeTo(out) }
-                                destUri = Uri.fromFile(file)
+                                FileOutputStream(file).use { out ->
+                                    if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled by user")
+                                    pdfDocument.writeTo(out)
+                                }
+                                pendingDestUri = Uri.fromFile(file)
                             }
 
                             pdfDocument.close()
+                            pdfDocument = null
 
                             if (!isActive) throw kotlinx.coroutines.CancellationException("Cancelled")
 
                             withContext(Dispatchers.Main) {
                                 isProcessing = false
                                 isComplete = true
-                                outputUri = destUri
+                                outputUri = pendingDestUri
 
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                     vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
@@ -296,6 +328,9 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                             }
 
                         } catch (e: kotlinx.coroutines.CancellationException) {
+                            // Phase 3: Ghost File Rollback on Cancel
+                            pdfDocument?.close()
+                            pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
                             withContext(Dispatchers.Main) {
                                 isProcessing = false
                                 isCancelling = false
@@ -303,6 +338,8 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                             }
                         } catch (e: Exception) {
                             e.printStackTrace()
+                            pdfDocument?.close()
+                            pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
                             withContext(Dispatchers.Main) {
                                 isProcessing = false
                                 isCancelling = false
@@ -347,6 +384,8 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                 onReset = {
                     isComplete = false
                     outputUri = null
+                    conversionProgress = 0f
+                    currentPage = 0
                 }
             )
         },
@@ -419,10 +458,10 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                     Text("Supports UTF-8 .txt, .markdown, .md notes", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(
-                        modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryContainer).clickable {
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(PrimaryContainer).clickable(enabled = !isProcessing) {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             textPickerLauncher.launch("text/*")
-                        }.padding(horizontal = 16.dp, vertical = 8.dp),
+                        }.alpha(if (isProcessing) 0.5f else 1f).padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = OnPrimary, modifier = Modifier.size(16.dp))
@@ -473,7 +512,8 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                             onValueChange = { textContent = it },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp),
                             textStyle = TextStyle(fontSize = 12.sp, color = OnSurface, lineHeight = 18.sp),
-                            cursorBrush = SolidColor(Primary)
+                            cursorBrush = SolidColor(Primary),
+                            enabled = !isProcessing
                         )
                     }
 
@@ -486,10 +526,10 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                             Text("Auto-synced to previewer", fontSize = 10.sp, color = OnSurfaceVariant)
                         }
                         Row(
-                            modifier = Modifier.clickable {
+                            modifier = Modifier.clickable(enabled = !isProcessing) {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 textContent = "# Project Executive Summary\nDate: Oct 24, 2024\nLead: FileEase Engineering Core\n\n1. Project Scope & Milestones\n- Native client-side document processing engine\n- Sub-50ms PDF assembly via Vector Streams\n- Complete offline privacy preservation architecture\n\n2. Key Deliverables\nReady-to-sign formatted brief exported for internal distribution."
-                            },
+                            }.alpha(if (isProcessing) 0.5f else 1f),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(Icons.Outlined.Refresh, contentDescription = null, tint = Secondary, modifier = Modifier.size(14.dp))
@@ -524,9 +564,9 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                 Text("Font Family", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant)
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PillButton(modifier = Modifier.weight(1f), text = "Sans-Serif", isSelected = fontFamily == "Sans-Serif") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontFamily = "Sans-Serif" }
-                    PillButton(modifier = Modifier.weight(1f), text = "Serif", isSelected = fontFamily == "Serif") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontFamily = "Serif" }
-                    PillButton(modifier = Modifier.weight(1f), text = "Monospace", isSelected = fontFamily == "Monospace") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontFamily = "Monospace" }
+                    PillButton(modifier = Modifier.weight(1f), text = "Sans-Serif", isSelected = fontFamily == "Sans-Serif", isEnabled = !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontFamily = "Sans-Serif" }
+                    PillButton(modifier = Modifier.weight(1f), text = "Serif", isSelected = fontFamily == "Serif", isEnabled = !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontFamily = "Serif" }
+                    PillButton(modifier = Modifier.weight(1f), text = "Monospace", isSelected = fontFamily == "Monospace", isEnabled = !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontFamily = "Monospace" }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -537,10 +577,10 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    PillButtonSmall(modifier = Modifier.weight(1f), text = "10pt", isSelected = fontSize == "10pt") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontSize = "10pt" }
-                    PillButtonSmall(modifier = Modifier.weight(1f), text = "12pt", isSelected = fontSize == "12pt") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontSize = "12pt" }
-                    PillButtonSmall(modifier = Modifier.weight(1f), text = "14pt", isSelected = fontSize == "14pt") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontSize = "14pt" }
-                    PillButtonSmall(modifier = Modifier.weight(1f), text = "16pt", isSelected = fontSize == "16pt") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontSize = "16pt" }
+                    PillButtonSmall(modifier = Modifier.weight(1f), text = "10pt", isSelected = fontSize == "10pt", isEnabled = !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontSize = "10pt" }
+                    PillButtonSmall(modifier = Modifier.weight(1f), text = "12pt", isSelected = fontSize == "12pt", isEnabled = !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontSize = "12pt" }
+                    PillButtonSmall(modifier = Modifier.weight(1f), text = "14pt", isSelected = fontSize == "14pt", isEnabled = !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontSize = "14pt" }
+                    PillButtonSmall(modifier = Modifier.weight(1f), text = "16pt", isSelected = fontSize == "16pt", isEnabled = !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fontSize = "16pt" }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -548,9 +588,9 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                 Text("Line Spacing", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant)
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PillButtonSmall(modifier = Modifier.weight(1f), text = "1.15x", isSelected = lineSpacing == "1.15x") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); lineSpacing = "1.15x" }
-                    PillButtonSmall(modifier = Modifier.weight(1f), text = "1.5x (Rec.)", isSelected = lineSpacing == "1.5x") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); lineSpacing = "1.5x" }
-                    PillButtonSmall(modifier = Modifier.weight(1f), text = "2.0x", isSelected = lineSpacing == "2.0x") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); lineSpacing = "2.0x" }
+                    PillButtonSmall(modifier = Modifier.weight(1f), text = "1.15x", isSelected = lineSpacing == "1.15x", isEnabled = !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); lineSpacing = "1.15x" }
+                    PillButtonSmall(modifier = Modifier.weight(1f), text = "1.5x (Rec.)", isSelected = lineSpacing == "1.5x", isEnabled = !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); lineSpacing = "1.5x" }
+                    PillButtonSmall(modifier = Modifier.weight(1f), text = "2.0x", isSelected = lineSpacing == "2.0x", isEnabled = !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); lineSpacing = "2.0x" }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -586,7 +626,7 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Page numbers in footer", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
                     }
-                    CustomSwitch(checked = pageNumbersEnabled, onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); pageNumbersEnabled = it })
+                    CustomSwitch(checked = pageNumbersEnabled, isEnabled = !isProcessing, onCheckedChange = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); pageNumbersEnabled = it })
                 }
             }
 
@@ -616,7 +656,8 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                         onValueChange = { outputFileName = it },
                         modifier = Modifier.fillMaxWidth(),
                         textStyle = TextStyle(fontSize = 12.sp, color = OnSurface, fontWeight = FontWeight.Medium),
-                        cursorBrush = SolidColor(Primary)
+                        cursorBrush = SolidColor(Primary),
+                        enabled = !isProcessing
                     )
                 }
 
@@ -632,7 +673,8 @@ fun TextToPdfScreen(onNavigateBack: () -> Unit) {
                         onValueChange = { authorName = it },
                         modifier = Modifier.fillMaxWidth(),
                         textStyle = TextStyle(fontSize = 12.sp, color = OnSurface),
-                        cursorBrush = SolidColor(Primary)
+                        cursorBrush = SolidColor(Primary),
+                        enabled = !isProcessing
                     )
                 }
             }
@@ -710,7 +752,7 @@ private fun ModeTab(modifier: Modifier, title: String, icon: ImageVector, isSele
 }
 
 @Composable
-private fun PillButton(modifier: Modifier, text: String, isSelected: Boolean, onClick: () -> Unit) {
+private fun PillButton(modifier: Modifier, text: String, isSelected: Boolean, isEnabled: Boolean, onClick: () -> Unit) {
     val bgColor = if (isSelected) Primary else SurfaceContainerHigh
     val textColor = if (isSelected) OnPrimary else OnSurface
 
@@ -718,7 +760,8 @@ private fun PillButton(modifier: Modifier, text: String, isSelected: Boolean, on
         modifier = modifier
             .shadow(if(isSelected) 1.dp else 0.dp, RoundedCornerShape(8.dp))
             .background(bgColor, RoundedCornerShape(8.dp))
-            .clickable { onClick() }
+            .clickable(enabled = isEnabled) { onClick() }
+            .alpha(if (isEnabled) 1f else 0.6f)
             .padding(vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -727,7 +770,7 @@ private fun PillButton(modifier: Modifier, text: String, isSelected: Boolean, on
 }
 
 @Composable
-private fun PillButtonSmall(modifier: Modifier, text: String, isSelected: Boolean, onClick: () -> Unit) {
+private fun PillButtonSmall(modifier: Modifier, text: String, isSelected: Boolean, isEnabled: Boolean, onClick: () -> Unit) {
     val bgColor = if (isSelected) Primary else SurfaceContainerHigh
     val textColor = if (isSelected) OnPrimary else OnSurface
 
@@ -735,7 +778,8 @@ private fun PillButtonSmall(modifier: Modifier, text: String, isSelected: Boolea
         modifier = modifier
             .shadow(if(isSelected) 1.dp else 0.dp, RoundedCornerShape(8.dp))
             .background(bgColor, RoundedCornerShape(8.dp))
-            .clickable { onClick() }
+            .clickable(enabled = isEnabled) { onClick() }
+            .alpha(if (isEnabled) 1f else 0.6f)
             .padding(vertical = 6.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -744,7 +788,7 @@ private fun PillButtonSmall(modifier: Modifier, text: String, isSelected: Boolea
 }
 
 @Composable
-private fun CustomSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun CustomSwitch(checked: Boolean, isEnabled: Boolean, onCheckedChange: (Boolean) -> Unit) {
     val bg by animateColorAsState(if (checked) PrimaryContainer else OutlineVariant, label = "switchBg")
     val offset by animateDpAsState(if (checked) 16.dp else 0.dp, label = "switchOffset")
 
@@ -753,8 +797,8 @@ private fun CustomSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
             .width(40.dp)
             .height(24.dp)
             .clip(RoundedCornerShape(50))
-            .background(bg)
-            .clickable { onCheckedChange(!checked) }
+            .background(bg.copy(alpha = if (isEnabled) 1f else 0.5f))
+            .clickable(enabled = isEnabled) { onCheckedChange(!checked) }
             .padding(2.dp),
         contentAlignment = Alignment.CenterStart
     ) {
@@ -762,7 +806,7 @@ private fun CustomSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
             modifier = Modifier
                 .offset(x = offset)
                 .size(20.dp)
-                .shadow(1.dp, CircleShape)
+                .shadow(if (isEnabled) 1.dp else 0.dp, CircleShape)
                 .background(SurfaceContainerLowest, CircleShape)
         )
     }
@@ -774,6 +818,8 @@ private fun TextToPdfBottomBar(
     isCancelling: Boolean,
     isComplete: Boolean,
     isEnabled: Boolean,
+    progress: Float,
+    currentPage: Int,
     onConvert: () -> Unit,
     onCancel: () -> Unit,
     onShare: () -> Unit,
@@ -810,7 +856,7 @@ private fun TextToPdfBottomBar(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Primary))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Dynamic pagination & rendering", fontSize = 10.sp, color = OnSurfaceVariant)
+                                Text("Dynamic pagination & wrapping", fontSize = 10.sp, color = OnSurfaceVariant)
                             }
                             Text("A4 Document", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Primary)
                         }
@@ -833,9 +879,9 @@ private fun TextToPdfBottomBar(
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text("Cancelling...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                                     } else if (processing) {
-                                        CircularProgressIndicator(color = contentColor, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                        CircularProgressIndicator(progress = { progress }, color = contentColor, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text("Compiling Vector PDF...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                                        Text(if (currentPage > 0) "Rendering page $currentPage..." else "Compiling Vector PDF...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                                     } else {
                                         Icon(Icons.Outlined.PictureAsPdf, contentDescription = null, tint = if (isEnabled) contentColor else OutlineVariant, modifier = Modifier.size(20.dp))
                                         Spacer(modifier = Modifier.width(8.dp))
