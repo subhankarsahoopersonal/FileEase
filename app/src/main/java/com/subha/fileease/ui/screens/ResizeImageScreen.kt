@@ -377,7 +377,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Dimension Controls Container (FIXED LAYOUT)
+            // Dimension Controls Container
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -462,7 +462,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                     }
                 }
 
-                // Quick Presets Container (Bleeds to edges naturally)
+                // Quick Presets Container
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
