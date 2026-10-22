@@ -17,6 +17,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -29,6 +30,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -46,11 +49,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -85,6 +90,40 @@ val Indigo50 = Color(0xFFEEF2FF)
 val Slate800 = Color(0xFF1E293B)
 val Slate700 = Color(0xFF334155)
 val Slate600 = Color(0xFF475569)
+
+// -------------------------------------------------------------
+// PREMIUM PHYSICS BOUNCE MODIFIERS
+// -------------------------------------------------------------
+
+@OptIn(ExperimentalFoundationApi::class)
+fun Modifier.combinedBounceClick(
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null
+): Modifier = composed {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.95f else 1f,
+        animationSpec = spring(stiffness = 400f, dampingRatio = 0.6f),
+        label = "combinedBounce"
+    )
+
+    this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .combinedClickable(
+            interactionSource = interactionSource,
+            indication = null,
+            onClick = onClick,
+            onLongClick = onLongClick
+        )
+}
+
+// -------------------------------------------------------------
+// MAIN SCREEN
+// -------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class)
 @Composable
@@ -285,7 +324,8 @@ fun FileManagerScreen() {
                         text = data.visuals.message,
                         color = Color.White,
                         fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Medium,
+                        fontFamily = LocalTextStyle.current.fontFamily
                     )
                 }
             }
@@ -346,7 +386,7 @@ fun FileManagerScreen() {
                     isSearching = isSearching,
                     onQueryChange = { searchQuery = it }
                 )
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(20.dp))
             }
 
             BreadcrumbNavigation(
@@ -354,11 +394,11 @@ fun FileManagerScreen() {
                 currentDir = currentDir,
                 onBreadcrumbClick = { changeDirectory(it) }
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Box(modifier = Modifier.fillMaxSize()) {
                 val listBottomPadding by animateDpAsState(
-                    targetValue = if (stagedFileForMove != null) 96.dp else 130.dp, // Added extra padding for Floating bar
+                    targetValue = if (stagedFileForMove != null) 96.dp else 130.dp,
                     label = "listBottomPadding"
                 )
 
@@ -370,14 +410,19 @@ fun FileManagerScreen() {
                     if (!hasStoragePermission) {
                         item {
                             Box(
-                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(PrimaryBlue.copy(alpha = 0.1f)).clickable { requestPermission() }.padding(24.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(PrimaryBlue.copy(alpha = 0.05f))
+                                    .bounceClick { requestPermission() }
+                                    .padding(24.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(Icons.Outlined.Folder, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(48.dp))
                                     Spacer(modifier = Modifier.height(12.dp))
-                                    Text("Storage Permission Required", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                    Text("Tap here to allow access to your files", fontSize = 13.sp, color = TextSecondary)
+                                    Text("Storage Permission Required", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary, fontFamily = LocalTextStyle.current.fontFamily)
+                                    Text("Tap here to allow access to your files", fontSize = 13.sp, color = TextSecondary, fontFamily = LocalTextStyle.current.fontFamily)
                                 }
                             }
                         }
@@ -387,7 +432,8 @@ fun FileManagerScreen() {
                                 Text(
                                     text = if (searchQuery.isNotEmpty()) "No matches found for \"$searchQuery\"" else "This folder is empty",
                                     fontSize = 14.sp,
-                                    color = TextTertiary
+                                    color = TextTertiary,
+                                    fontFamily = LocalTextStyle.current.fontFamily
                                 )
                             }
                         }
@@ -397,7 +443,7 @@ fun FileManagerScreen() {
                             key = { file -> file.absolutePath }
                         ) { file ->
                             if (stagedFileForMove?.absolutePath != file.absolutePath || searchQuery.isNotBlank()) {
-                                Box(modifier = Modifier.padding(bottom = 8.dp)) {
+                                Box(modifier = Modifier.padding(bottom = 12.dp)) {
                                     val (icon, bg, fg) = getFileIconAndColors(file)
 
                                     val subtitle = if (searchQuery.isNotBlank()) {
@@ -620,7 +666,7 @@ fun FileManagerScreen() {
                     .fillMaxWidth()
                     .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
             ) {
-                Text("Rename", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                Text("Rename", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextPrimary, fontFamily = LocalTextStyle.current.fontFamily)
                 Spacer(modifier = Modifier.height(16.dp))
 
                 BasicTextField(
@@ -630,7 +676,7 @@ fun FileManagerScreen() {
                         if (renameError.isNotEmpty()) renameError = ""
                     },
                     modifier = Modifier.focusRequester(renameFocusRequester),
-                    textStyle = TextStyle(fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.Medium),
+                    textStyle = TextStyle(fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.Medium, fontFamily = LocalTextStyle.current.fontFamily),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { attemptRename() }),
@@ -650,7 +696,7 @@ fun FileManagerScreen() {
                             contentAlignment = Alignment.CenterStart
                         ) {
                             if (newFileName.text.isEmpty()) {
-                                Text("Enter new name", color = TextTertiary, fontSize = 14.sp)
+                                Text("Enter new name", color = TextTertiary, fontSize = 14.sp, fontFamily = LocalTextStyle.current.fontFamily)
                             }
                             innerTextField()
                         }
@@ -668,7 +714,8 @@ fun FileManagerScreen() {
                         Text(
                             text = renameError,
                             color = Red500,
-                            fontSize = 12.sp
+                            fontSize = 12.sp,
+                            fontFamily = LocalTextStyle.current.fontFamily
                         )
                     }
                 }
@@ -685,6 +732,7 @@ fun FileManagerScreen() {
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         color = TextTertiary,
+                        fontFamily = LocalTextStyle.current.fontFamily,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
                             .clickable { showRenameSheet = false }
@@ -701,7 +749,7 @@ fun FileManagerScreen() {
                             .padding(horizontal = 20.dp, vertical = 10.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("Rename", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                        Text("Rename", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White, fontFamily = LocalTextStyle.current.fontFamily)
                     }
                 }
             }
@@ -823,7 +871,8 @@ fun CreateFolderBottomSheet(
                 text = "New folder",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
-                color = TextPrimary
+                color = TextPrimary,
+                fontFamily = LocalTextStyle.current.fontFamily
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -835,7 +884,7 @@ fun CreateFolderBottomSheet(
                     validate(it.text)
                 },
                 modifier = Modifier.focusRequester(focusRequester),
-                textStyle = TextStyle(fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.Medium),
+                textStyle = TextStyle(fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.Medium, fontFamily = LocalTextStyle.current.fontFamily),
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = {
@@ -872,7 +921,7 @@ fun CreateFolderBottomSheet(
                 contentAlignment = Alignment.TopStart
             ) {
                 validationError?.let {
-                    Text(text = it, color = Red500, fontSize = 12.sp)
+                    Text(text = it, color = Red500, fontSize = 12.sp, fontFamily = LocalTextStyle.current.fontFamily)
                 }
             }
 
@@ -888,6 +937,7 @@ fun CreateFolderBottomSheet(
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                     color = TextTertiary,
+                    fontFamily = LocalTextStyle.current.fontFamily,
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .clickable { onDismiss() }
@@ -910,7 +960,7 @@ fun CreateFolderBottomSheet(
                         .padding(horizontal = 20.dp, vertical = 10.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("Create", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                    Text("Create", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White, fontFamily = LocalTextStyle.current.fontFamily)
                 }
             }
         }
@@ -989,7 +1039,8 @@ fun FloatingMoveBar(
                         fontWeight = FontWeight.SemiBold,
                         color = TextPrimary,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        fontFamily = LocalTextStyle.current.fontFamily
                     )
                     Text(
                         text = when {
@@ -1002,7 +1053,8 @@ fun FloatingMoveBar(
                         fontWeight = FontWeight.Medium,
                         color = if (canMove) TextSecondary else Red500,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        fontFamily = LocalTextStyle.current.fontFamily
                     )
                 }
 
@@ -1011,7 +1063,7 @@ fun FloatingMoveBar(
                         .size(36.dp)
                         .clip(CircleShape)
                         .background(Slate100)
-                        .clickable { onCancel() },
+                        .bounceClick { onCancel() },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(Icons.Outlined.Close, contentDescription = "Cancel", tint = TextSecondary, modifier = Modifier.size(18.dp))
@@ -1021,7 +1073,7 @@ fun FloatingMoveBar(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
                         .background(if (canMove) PrimaryBlue else Slate100)
-                        .clickable(enabled = canMove) { onConfirmMove(fileToRender) }
+                        .bounceClick { if (canMove) onConfirmMove(fileToRender) }
                         .padding(horizontal = 18.dp, vertical = 10.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1029,7 +1081,8 @@ fun FloatingMoveBar(
                         text = "Move",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (canMove) Color.White else TextTertiary
+                        color = if (canMove) Color.White else TextTertiary,
+                        fontFamily = LocalTextStyle.current.fontFamily
                     )
                 }
             }
@@ -1133,27 +1186,32 @@ fun FileManagerTopBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceColor.copy(alpha = 0.95f))
-            .statusBarsPadding() // FIX: Forces the TopBar underneath the system icons
+            .background(BgColor.copy(alpha = 0.95f))
+            .statusBarsPadding()
             .padding(horizontal = 20.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text("Files", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+        Text("Files", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, color = TextPrimary, fontFamily = LocalTextStyle.current.fontFamily)
 
         if (showAddFolder) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
-                    .background(Slate100)
-                    .clickable { onAddFolderClick() },
+                    .background(PrimaryBlue.copy(alpha = 0.08f)) // Soft, flat blue tint instead of a harsh shadow
+                    .bounceClick { onAddFolderClick() },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Outlined.Add, contentDescription = "Add new folder", tint = Slate700, modifier = Modifier.size(20.dp))
+                Icon(
+                    imageVector = Icons.Outlined.Add,
+                    contentDescription = "Add new folder",
+                    tint = PrimaryBlue,
+                    modifier = Modifier.size(24.dp)
+                )
             }
         } else {
-            Spacer(modifier = Modifier.size(36.dp))
+            Spacer(modifier = Modifier.size(40.dp))
         }
     }
 }
@@ -1164,7 +1222,7 @@ fun SelectionTopBar(selectedCount: Int, onClear: () -> Unit, onDeleteAll: () -> 
         modifier = Modifier
             .fillMaxWidth()
             .background(Blue50)
-            .statusBarsPadding() // FIX: Pushes the Selection TopBar down safely
+            .statusBarsPadding()
             .padding(horizontal = 20.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -1174,17 +1232,17 @@ fun SelectionTopBar(selectedCount: Int, onClear: () -> Unit, onDeleteAll: () -> 
                 Icons.Outlined.Close,
                 contentDescription = "Clear",
                 tint = TextPrimary,
-                modifier = Modifier.size(24.dp).clip(CircleShape).clickable { onClear() }
+                modifier = Modifier.size(28.dp).clip(CircleShape).bounceClick { onClear() }
             )
             Spacer(modifier = Modifier.width(16.dp))
-            Text("$selectedCount selected", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+            Text("$selectedCount selected", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = TextPrimary, fontFamily = LocalTextStyle.current.fontFamily)
         }
         Row {
             Icon(
                 Icons.Outlined.DeleteOutline,
                 contentDescription = "Delete",
                 tint = Red500,
-                modifier = Modifier.size(24.dp).clip(CircleShape).clickable { onDeleteAll() }
+                modifier = Modifier.size(28.dp).clip(CircleShape).bounceClick { onDeleteAll() }
             )
         }
     }
@@ -1195,32 +1253,33 @@ fun FileSearchBar(query: String, isSearching: Boolean, onQueryChange: (String) -
     BasicTextField(
         value = query,
         onValueChange = onQueryChange,
-        textStyle = TextStyle(fontSize = 14.sp, color = TextPrimary),
+        textStyle = TextStyle(fontSize = 15.sp, color = TextPrimary, fontWeight = FontWeight.Medium, fontFamily = LocalTextStyle.current.fontFamily),
         singleLine = true,
         decorationBox = { innerTextField ->
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp)
+                    .height(52.dp) // Taller, premium feel
+                    .shadow(elevation = 6.dp, shape = RoundedCornerShape(50), spotColor = Color.Black.copy(alpha = 0.06f), ambientColor = Color.Black.copy(alpha = 0.02f))
                     .clip(RoundedCornerShape(50))
-                    .background(Slate100.copy(alpha = 0.9f)),
+                    .background(Color.White),
                 contentAlignment = Alignment.CenterStart
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 14.dp).fillMaxWidth()
+                    modifier = Modifier.padding(horizontal = 18.dp).fillMaxWidth()
                 ) {
                     if (isSearching) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = PrimaryBlue, strokeWidth = 2.dp)
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), color = PrimaryBlue, strokeWidth = 2.dp)
                     } else {
-                        Icon(Icons.Outlined.Search, contentDescription = "Search", tint = TextTertiary, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Outlined.Search, contentDescription = "Search", tint = PrimaryBlue, modifier = Modifier.size(22.dp))
                     }
 
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(12.dp))
 
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                         if (query.isEmpty()) {
-                            Text("Search files and folders", color = TextTertiary, fontSize = 14.sp)
+                            Text("Search files and folders", color = TextTertiary, fontSize = 15.sp, fontFamily = LocalTextStyle.current.fontFamily)
                         }
                         innerTextField()
                     }
@@ -1230,7 +1289,7 @@ fun FileSearchBar(query: String, isSearching: Boolean, onQueryChange: (String) -
                             Icons.Outlined.Close,
                             contentDescription = "Clear Search",
                             tint = TextTertiary,
-                            modifier = Modifier.size(18.dp).clip(CircleShape).clickable { onQueryChange("") }
+                            modifier = Modifier.size(20.dp).clip(CircleShape).clickable { onQueryChange("") }
                         )
                     }
                 }
@@ -1251,14 +1310,15 @@ fun BreadcrumbNavigation(rootPath: File, currentDir: File, onBreadcrumbClick: (F
         Text(
             text = "Internal Storage",
             color = if (segments.isEmpty()) Slate800 else PrimaryBlue,
-            fontSize = 13.sp,
-            fontWeight = if (segments.isEmpty()) FontWeight.SemiBold else FontWeight.Medium,
-            modifier = Modifier.clickable(enabled = segments.isNotEmpty()) { onBreadcrumbClick(rootPath) }
+            fontSize = 14.sp,
+            fontWeight = if (segments.isEmpty()) FontWeight.Bold else FontWeight.Medium,
+            fontFamily = LocalTextStyle.current.fontFamily,
+            modifier = Modifier.clickable(enabled = segments.isNotEmpty()) { onBreadcrumbClick(rootPath) }.padding(end = 4.dp)
         )
 
         var pathBuilder = rootPath.absolutePath
         segments.forEachIndexed { index, segment ->
-            Text(" › ", color = TextTertiary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 4.dp))
+            Text(" › ", color = TextTertiary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 4.dp))
             pathBuilder += "/$segment"
             val segmentFile = File(pathBuilder)
             val isLast = index == segments.lastIndex
@@ -1266,9 +1326,10 @@ fun BreadcrumbNavigation(rootPath: File, currentDir: File, onBreadcrumbClick: (F
             Text(
                 text = segment,
                 color = if (isLast) Slate800 else PrimaryBlue,
-                fontSize = 13.sp,
-                fontWeight = if (isLast) FontWeight.SemiBold else FontWeight.Medium,
-                modifier = Modifier.clickable(enabled = !isLast) { onBreadcrumbClick(segmentFile) }
+                fontSize = 14.sp,
+                fontWeight = if (isLast) FontWeight.Bold else FontWeight.Medium,
+                fontFamily = LocalTextStyle.current.fontFamily,
+                modifier = Modifier.clickable(enabled = !isLast) { onBreadcrumbClick(segmentFile) }.padding(horizontal = 4.dp)
             )
         }
     }
@@ -1285,14 +1346,24 @@ fun FileListItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, if (isSelected) PrimaryBlue.copy(alpha = 0.5f) else Slate100.copy(alpha = 0.8f), RoundedCornerShape(16.dp))
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (isSelected) PrimaryBlue.copy(alpha = 0.05f) else SurfaceColor)
-            .combinedClickable(
+            .shadow(
+                elevation = if (isSelected) 0.dp else 4.dp,
+                shape = RoundedCornerShape(20.dp),
+                spotColor = Color.Black.copy(alpha = 0.05f),
+                ambientColor = Color.Black.copy(alpha = 0.02f)
+            )
+            .border(
+                width = if (isSelected) 2.dp else 0.dp,
+                color = if (isSelected) PrimaryBlue else Color.Transparent,
+                shape = RoundedCornerShape(20.dp)
+            )
+            .clip(RoundedCornerShape(20.dp))
+            .background(if (isSelected) PrimaryBlue.copy(alpha = 0.05f) else Color.White)
+            .combinedBounceClick(
                 onClick = { onItemClick() },
                 onLongClick = { onItemLongClick() }
             )
-            .padding(14.dp),
+            .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1300,26 +1371,32 @@ fun FileListItem(
             if (isSelectionMode) {
                 Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
                     if (isSelected) {
-                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(24.dp))
+                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(26.dp))
                     } else {
-                        Box(modifier = Modifier.size(20.dp).border(2.dp, Slate600.copy(alpha = 0.3f), CircleShape))
+                        Box(modifier = Modifier.size(22.dp).border(2.dp, Slate600.copy(alpha = 0.3f), CircleShape))
                     }
                 }
             } else {
-                Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(iconBgColor), contentAlignment = Alignment.Center) {
+                Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(iconBgColor), contentAlignment = Alignment.Center) {
                     Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(24.dp))
                 }
             }
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(16.dp))
             Column {
-                Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, fontFamily = LocalTextStyle.current.fontFamily)
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(subtitle, fontSize = 12.sp, color = TextTertiary)
+                Text(subtitle, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = TextTertiary, fontFamily = LocalTextStyle.current.fontFamily)
             }
         }
         if (!isSelectionMode) {
-            Box(modifier = Modifier.size(32.dp).clip(CircleShape).clickable { onOptionsClick() }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.MoreVert, contentDescription = "Options", tint = TextTertiary, modifier = Modifier.size(20.dp))
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .bounceClick { onOptionsClick() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Outlined.MoreVert, contentDescription = "Options", tint = Slate600, modifier = Modifier.size(22.dp))
             }
         }
     }
@@ -1338,18 +1415,18 @@ fun FileOptionsDrawerContent(
 
     Column(modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 24.dp)) {
         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(bg), contentAlignment = Alignment.Center) {
-                Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(26.dp))
+            Box(modifier = Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(bg), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(28.dp))
             }
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(file.name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, fontSize = 12.sp, color = TextTertiary)
+                Text(file.name, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, fontFamily = LocalTextStyle.current.fontFamily)
+                Text(subtitle, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = TextTertiary, fontFamily = LocalTextStyle.current.fontFamily)
             }
         }
 
         HorizontalDivider(color = Slate100)
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         DrawerActionItem(icon = Icons.Outlined.Edit, title = "Rename", color = Slate800, iconColor = Slate600, onClick = onRename)
         DrawerActionItem(icon = Icons.Outlined.DriveFileMove, title = "Move", color = Slate800, iconColor = Slate600, onClick = onMove)
@@ -1362,13 +1439,13 @@ fun DrawerActionItem(icon: ImageVector, title: String, color: Color, iconColor: 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable { onClick() }
-            .padding(horizontal = 4.dp, vertical = 12.dp),
+            .clip(RoundedCornerShape(16.dp))
+            .bounceClick { onClick() }
+            .padding(horizontal = 12.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = title, tint = iconColor, modifier = Modifier.size(20.dp))
-        Spacer(modifier = Modifier.width(14.dp))
-        Text(text = title, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = color)
+        Icon(icon, contentDescription = title, tint = iconColor, modifier = Modifier.size(22.dp))
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(text = title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = color, fontFamily = LocalTextStyle.current.fontFamily)
     }
 }
