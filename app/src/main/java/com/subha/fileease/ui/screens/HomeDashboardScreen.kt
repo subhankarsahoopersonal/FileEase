@@ -110,7 +110,8 @@ fun HomeDashboardScreen(
     onSplitClick: () -> Unit = {},
     onCompressClick: () -> Unit = {},
     onImagesToPdfClick: () -> Unit = {},
-    onViewAllClick: () -> Unit = {}
+    onViewAllClick: () -> Unit = {},
+    onRecentViewAllClick: () -> Unit = {} // Added navigation parameter for Recent Activity
 ) {
     val context = LocalContext.current
 
@@ -183,7 +184,7 @@ fun HomeDashboardScreen(
             DeviceStorageSection(hasStoragePermission, requestPermission)
 
             Spacer(modifier = Modifier.height(28.dp))
-            RecentActivitySection(hasStoragePermission)
+            RecentActivitySection(hasStoragePermission, onRecentViewAllClick) // Wired to section
 
             Spacer(modifier = Modifier.height(32.dp))
         }
@@ -495,11 +496,9 @@ fun DeviceStorageSection(hasStoragePermission: Boolean, onRequestPermission: () 
 }
 
 @Composable
-fun RecentActivitySection(hasStoragePermission: Boolean) {
+fun RecentActivitySection(hasStoragePermission: Boolean, onViewAllClick: () -> Unit) {
     val context = LocalContext.current
     var recentFiles by remember { mutableStateOf<List<RecentActivityData>>(emptyList()) }
-
-    // FIX: Switched from rememberSaveable to remember so it re-triggers when returning from other tabs
     var isFilesLoaded by remember { mutableStateOf(false) }
 
     LaunchedEffect(hasStoragePermission) {
@@ -528,7 +527,7 @@ fun RecentActivitySection(hasStoragePermission: Boolean) {
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
-                    .bounceClick { }
+                    .bounceClick { onViewAllClick() } // Trigger navigation here
                     .padding(4.dp)
             ) {
                 Text(

@@ -130,7 +130,8 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
                     onSplitClick = { navController.navigate("pdf_split") },
                     onCompressClick = { navController.navigate("pdf_compress") },
                     onImagesToPdfClick = { navController.navigate("images_to_pdf") },
-                    onViewAllClick = { navController.navigate(BottomNavItem.PdfTools.route) }
+                    onViewAllClick = { navController.navigate(BottomNavItem.PdfTools.route) },
+                    onRecentViewAllClick = { navController.navigate(BottomNavItem.Files.route) }
                 )
             }
         }
