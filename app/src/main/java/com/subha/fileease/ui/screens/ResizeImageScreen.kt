@@ -15,6 +15,7 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -102,7 +103,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
     var imageSizeMb by remember { mutableFloatStateOf(0f) }
     var imageExtension by remember { mutableStateOf("JPG") }
 
-    // UI & Math State
+    // Resize Math State
     var resizeMode by remember { mutableStateOf("pixels") }
     var targetWidth by remember { mutableStateOf("1080") }
     var targetHeight by remember { mutableStateOf("1080") }
@@ -113,7 +114,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
 
     val aspect = if (imageHeight > 0) imageWidth.toFloat() / imageHeight else 16f / 9f
 
-    // Dynamic Telemetry Calculations
+    // Dynamic Estimations
     val tW = targetWidth.toFloatOrNull() ?: 0f
     val tH = targetHeight.toFloatOrNull() ?: 0f
     val pixelRatio = if (imageWidth > 0 && imageHeight > 0) (tW * tH) / (imageWidth * imageHeight).toFloat() else 0.25f
@@ -130,7 +131,6 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                 try {
                     var name = "Image.jpg"
                     var sizeBytes = 0L
-
                     context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                         val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                         val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
@@ -141,9 +141,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                     }
 
                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    context.contentResolver.openInputStream(uri)?.use {
-                        BitmapFactory.decodeStream(it, null, options)
-                    }
+                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
 
                     withContext(Dispatchers.Main) {
                         imageUri = uri
@@ -153,8 +151,8 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                         imageSizeMb = sizeBytes / (1024f * 1024f)
                         imageExtension = name.substringAfterLast('.', "JPG").uppercase().take(3)
 
-                        targetWidth = options.outWidth.toString()
-                        targetHeight = options.outHeight.toString()
+                        targetWidth = "1080"
+                        targetHeight = "1080"
                         activePreset = "custom"
                         isComplete = false
                         outputUri = null
@@ -194,7 +192,6 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                             val mimeType = if (isPng) "image/png" else "image/jpeg"
                             val compressFormat = if (isPng) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
 
-                            // OOM Safe Decoder Setup
                             val options = BitmapFactory.Options()
                             var sampleSize = 1
                             while (imageWidth / sampleSize > outW * 2 || imageHeight / sampleSize > outH * 2) { sampleSize *= 2 }
@@ -202,14 +199,12 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
 
                             val original = context.contentResolver.openInputStream(imageUri!!)?.use {
                                 BitmapFactory.decodeStream(it, null, options)
-                            } ?: throw Exception("Failed to load source image")
+                            } ?: throw Exception("Failed to load image")
 
-                            // Resampling Interpolation Engine
                             val filter = resampleAlgo != "nearest"
                             val scaledBitmap = Bitmap.createScaledBitmap(original, outW, outH, filter)
                             if (scaledBitmap != original) original.recycle()
 
-                            // Scoped Storage Export
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                 val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                                 val details = ContentValues().apply {
@@ -261,31 +256,21 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                 },
                 onShare = {
                     outputUri?.let { uri ->
-                        try {
-                            val isPng = selectedEncoding == "Export as PNG"
-                            val intent = Intent(Intent.ACTION_SEND).apply {
-                                type = if (isPng) "image/png" else "image/jpeg"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            context.startActivity(Intent.createChooser(intent, "Share Image"))
-                        } catch (e: Exception) {
-                            coroutineScope.launch { snackbarHostState.showSnackbar("Error launching share sheet.") }
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "image/*"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
+                        context.startActivity(Intent.createChooser(intent, "Share Image"))
                     }
                 },
                 onOpen = {
                     outputUri?.let { uri ->
-                        try {
-                            val isPng = selectedEncoding == "Export as PNG"
-                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, if (isPng) "image/png" else "image/jpeg")
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            context.startActivity(Intent.createChooser(intent, "Open Image"))
-                        } catch (e: Exception) {
-                            coroutineScope.launch { snackbarHostState.showSnackbar("No gallery app installed.") }
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, "image/*")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
+                        context.startActivity(Intent.createChooser(intent, "Open Image"))
                     }
                 },
                 onReset = { isComplete = false; outputUri = null; imageUri = null }
@@ -300,14 +285,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                 .verticalScroll(scrollState)
                 .padding(horizontal = 16.dp)
         ) {
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "Scale image dimensions by pixels or percentage without distortion",
-                fontSize = 13.sp,
-                color = OnSurfaceVariant,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Source Image Card
             Column(
@@ -447,7 +425,8 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                             Row(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(50))
-                                    .background(if (maintainAspect) SurfaceContainerHigh else SurfaceContainer)
+                                    .background(SurfaceContainerLowest)
+                                    .border(1.dp, if(maintainAspect) Primary else OutlineVariant, RoundedCornerShape(50))
                                     .clickable(enabled = !isProcessing) {
                                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         maintainAspect = !maintainAspect
@@ -455,9 +434,9 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                                     .padding(horizontal = 12.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(if (maintainAspect) Icons.Outlined.Link else Icons.Outlined.LinkOff, contentDescription = null, tint = if (maintainAspect) Primary else OnSurfaceVariant, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(if (maintainAspect) "Maintain Aspect Ratio (16:9)" else "Aspect Ratio Unlocked", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = if (maintainAspect) Primary else OnSurfaceVariant)
+                                Icon(if (maintainAspect) Icons.Outlined.Link else Icons.Outlined.LinkOff, contentDescription = null, tint = if (maintainAspect) Primary else OnSurfaceVariant, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(if (maintainAspect) "Maintain Aspect Ratio" else "Unlocked", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = if (maintainAspect) Primary else OnSurfaceVariant)
                             }
                         }
 
@@ -738,7 +717,7 @@ private fun DimensionInputBox(value: String, icon: ImageVector, unit: String, is
             onValueChange = onValueChange,
             enabled = isEnabled,
             keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
-            textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface),
+            textStyle = LocalTextStyle.current.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface),
             cursorBrush = SolidColor(Primary),
             modifier = Modifier.weight(1f)
         )
@@ -909,7 +888,7 @@ private fun ResizeBottomBar(
                                             Text("Resize & Save Image", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = contentColor)
                                         }
                                         Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLowest.copy(alpha=0.2f)).padding(horizontal = 8.dp, vertical = 4.dp)) {
-                                            Text("Target: $targetDims", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = contentColor)
+                                            Text(targetDims, fontSize = 10.sp, fontWeight = FontWeight.Medium, color = contentColor)
                                         }
                                     }
                                 }
