@@ -1,6 +1,7 @@
 package com.subha.fileease.ui.screens
 
 import android.Manifest
+import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -10,6 +11,7 @@ import android.os.Environment
 import android.os.StatFs
 import android.provider.MediaStore
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
@@ -74,7 +76,9 @@ data class RecentActivityData(
     val title: String,
     val subtitle: String,
     val size: String,
-    val iconType: ActivityIconType
+    val iconType: ActivityIconType,
+    val uri: Uri = Uri.EMPTY,
+    val mimeType: String = "*/*"
 )
 
 // Premium SaaS Bounce Animation Modifier
@@ -111,7 +115,7 @@ fun HomeDashboardScreen(
     onCompressClick: () -> Unit = {},
     onImagesToPdfClick: () -> Unit = {},
     onViewAllClick: () -> Unit = {},
-    onRecentViewAllClick: () -> Unit = {} // Added navigation parameter for Recent Activity
+    onRecentViewAllClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
 
@@ -184,7 +188,7 @@ fun HomeDashboardScreen(
             DeviceStorageSection(hasStoragePermission, requestPermission)
 
             Spacer(modifier = Modifier.height(28.dp))
-            RecentActivitySection(hasStoragePermission, onRecentViewAllClick) // Wired to section
+            RecentActivitySection(hasStoragePermission, onRecentViewAllClick)
 
             Spacer(modifier = Modifier.height(32.dp))
         }
@@ -527,7 +531,7 @@ fun RecentActivitySection(hasStoragePermission: Boolean, onViewAllClick: () -> U
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
-                    .bounceClick { onViewAllClick() } // Trigger navigation here
+                    .bounceClick { onViewAllClick() }
                     .padding(4.dp)
             ) {
                 Text(
@@ -556,7 +560,8 @@ fun RecentActivitySection(hasStoragePermission: Boolean, onViewAllClick: () -> U
                     iconColor = Red500,
                     title = "document_scan.pdf",
                     subtitle = "Edited • 2 min ago",
-                    size = "4.2 MB"
+                    size = "4.2 MB",
+                    onClick = { Toast.makeText(context, "Tap Device Storage to sync first", Toast.LENGTH_SHORT).show() }
                 )
                 ActivityItem(
                     icon = Icons.Outlined.Image,
@@ -564,7 +569,8 @@ fun RecentActivitySection(hasStoragePermission: Boolean, onViewAllClick: () -> U
                     iconColor = Emerald500,
                     title = "invoice.jpg",
                     subtitle = "Converted • 18 min ago",
-                    size = "1.1 MB"
+                    size = "1.1 MB",
+                    onClick = { Toast.makeText(context, "Tap Device Storage to sync first", Toast.LENGTH_SHORT).show() }
                 )
                 ActivityItem(
                     icon = Icons.Outlined.Description,
@@ -572,7 +578,8 @@ fun RecentActivitySection(hasStoragePermission: Boolean, onViewAllClick: () -> U
                     iconColor = PrimaryBlue,
                     title = "project_brief.docx",
                     subtitle = "Compressed • Yesterday",
-                    size = "890 KB"
+                    size = "890 KB",
+                    onClick = { Toast.makeText(context, "Tap Device Storage to sync first", Toast.LENGTH_SHORT).show() }
                 )
             } else if (recentFiles.isEmpty() && isFilesLoaded) {
                 Text("No recent files found", color = TextTertiary, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(14.dp), fontFamily = LocalTextStyle.current.fontFamily)
@@ -593,7 +600,25 @@ fun RecentActivitySection(hasStoragePermission: Boolean, onViewAllClick: () -> U
                         ActivityIconType.IMAGE -> Emerald500
                         ActivityIconType.DOC -> PrimaryBlue
                     }
-                    ActivityItem(icon, bg, fg, file.title, file.subtitle, file.size)
+                    ActivityItem(
+                        icon = icon,
+                        iconBgColor = bg,
+                        iconColor = fg,
+                        title = file.title,
+                        subtitle = file.subtitle,
+                        size = file.size,
+                        onClick = {
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW).apply {
+                                    setDataAndType(file.uri, file.mimeType)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "Open File"))
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Cannot open file", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -607,7 +632,8 @@ fun ActivityItem(
     iconColor: Color,
     title: String,
     subtitle: String,
-    size: String
+    size: String,
+    onClick: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
@@ -615,7 +641,7 @@ fun ActivityItem(
             .border(1.dp, Slate100, RoundedCornerShape(20.dp))
             .clip(RoundedCornerShape(20.dp))
             .background(SurfaceColor)
-            .bounceClick { }
+            .bounceClick { onClick() }
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -696,6 +722,7 @@ private fun getRecentDeviceFiles(context: Context): List<RecentActivityData> {
     try {
         val collection = MediaStore.Files.getContentUri("external")
         val projection = arrayOf(
+            MediaStore.Files.FileColumns._ID, // Added to construct Uri
             MediaStore.Files.FileColumns.DISPLAY_NAME,
             MediaStore.Files.FileColumns.SIZE,
             MediaStore.Files.FileColumns.DATE_MODIFIED,
@@ -704,6 +731,7 @@ private fun getRecentDeviceFiles(context: Context): List<RecentActivityData> {
         val sortOrder = "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC"
 
         context.contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
+            val idCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
             val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
             val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
             val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
@@ -711,10 +739,12 @@ private fun getRecentDeviceFiles(context: Context): List<RecentActivityData> {
 
             var count = 0
             while (cursor.moveToNext() && count < 3) {
+                val id = cursor.getLong(idCol)
+                val uri = ContentUris.withAppendedId(collection, id)
                 val name = cursor.getString(nameCol) ?: "Unknown File"
                 val sizeBytes = cursor.getLong(sizeCol)
                 val dateSecs = cursor.getLong(dateCol)
-                val mime = cursor.getString(mimeCol) ?: ""
+                val mime = cursor.getString(mimeCol) ?: "*/*"
 
                 if (sizeBytes == 0L) continue
 
@@ -751,7 +781,9 @@ private fun getRecentDeviceFiles(context: Context): List<RecentActivityData> {
                         title = name,
                         subtitle = "$verb • $timeStr",
                         size = sizeStr,
-                        iconType = iconType
+                        iconType = iconType,
+                        uri = uri,
+                        mimeType = mime
                     )
                 )
                 count++
