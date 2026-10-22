@@ -14,6 +14,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,13 +41,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.subha.fileease.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -194,20 +198,14 @@ fun DashboardTopBar() {
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
+        Image(
+            painter = painterResource(id = R.drawable.fileease_logo),
+            contentDescription = "App Logo",
             modifier = Modifier
-                .size(32.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(PrimaryBlue),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.Description,
-                contentDescription = "Logo",
-                tint = Color.White,
-                modifier = Modifier.size(20.dp)
-            )
-        }
+                .size(36.dp)
+                .clip(RoundedCornerShape(8.dp)),
+            contentScale = ContentScale.Fit
+        )
         Spacer(modifier = Modifier.width(10.dp))
         Text(
             text = "FileEase",
@@ -223,7 +221,7 @@ fun DashboardTopBar() {
 fun GreetingSection() {
     Column {
         Text(
-            text = "Good morning,\nSubha",
+            text = "Good morning",
             fontSize = 28.sp,
             fontWeight = FontWeight.ExtraBold,
             color = TextPrimary,
@@ -414,7 +412,6 @@ fun DeviceStorageSection(hasStoragePermission: Boolean, onRequestPermission: () 
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            // Richer, deeper blue gradient matching the mockup
             .background(Brush.linearGradient(listOf(Color(0xFF3B82F6), Color(0xFF2563EB), Color(0xFF1D4ED8))))
             .bounceClick { if (!hasStoragePermission) onRequestPermission() }
             .padding(24.dp)
