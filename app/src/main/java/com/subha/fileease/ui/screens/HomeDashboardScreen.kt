@@ -53,6 +53,7 @@ import androidx.core.content.ContextCompat
 import com.subha.fileease.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 
 // App-Wide Color Tokens
 val BgColor = Color(0xFFFAF8FF)
@@ -219,9 +220,18 @@ fun DashboardTopBar() {
 
 @Composable
 fun GreetingSection() {
+    // Dynamically calculate the greeting based on the current hour
+    val currentHour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
+    val greeting = when (currentHour) {
+        in 0..11 -> "Good Morning"
+        in 12..16 -> "Good Afternoon"
+        in 17..20 -> "Good Evening"
+        else -> "Good Night"
+    }
+
     Column {
         Text(
-            text = "Good morning",
+            text = "$greeting",
             fontSize = 28.sp,
             fontWeight = FontWeight.ExtraBold,
             color = TextPrimary,
