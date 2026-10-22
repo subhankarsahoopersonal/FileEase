@@ -1,21 +1,11 @@
 package com.subha.fileease.ui.screens
 
-import android.content.ContentValues
-import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.media.MediaScannerConnection
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -55,10 +45,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
 import kotlin.math.roundToInt
 
 // Exact Tailwind Color Tokens
@@ -85,7 +74,6 @@ private val OutlineVariant = Color(0xFFC2C6D8)
 fun ResizeImageScreen(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
-    val vibrator = remember { context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as Vibrator }
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -93,17 +81,16 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
     // Execution State
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
-    var outputUri by remember { mutableStateOf<Uri?>(null) }
 
     // Source Data
     var imageUri by remember { mutableStateOf<Uri?>(null) }
-    var imageName by remember { mutableStateOf("Architecture_Draft.png") }
-    var imageWidth by remember { mutableIntStateOf(3840) }
-    var imageHeight by remember { mutableIntStateOf(2160) }
-    var imageSizeMb by remember { mutableFloatStateOf(6.2f) }
-    var imageExtension by remember { mutableStateOf("PNG") }
+    var imageName by remember { mutableStateOf("") }
+    var imageWidth by remember { mutableIntStateOf(0) }
+    var imageHeight by remember { mutableIntStateOf(0) }
+    var imageSizeMb by remember { mutableFloatStateOf(0f) }
+    var imageExtension by remember { mutableStateOf("JPG") }
 
-    // Resize Math State
+    // UI & Math State
     var resizeMode by remember { mutableStateOf("pixels") }
     var targetWidth by remember { mutableStateOf("1080") }
     var targetHeight by remember { mutableStateOf("1080") }
@@ -113,7 +100,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
 
     val aspect = if (imageHeight > 0) imageWidth.toFloat() / imageHeight else 16f / 9f
 
-    // Dynamic Estimations
+    // Phase 3: Dynamic Telemetry Calculations
     val tW = targetWidth.toFloatOrNull() ?: 0f
     val tH = targetHeight.toFloatOrNull() ?: 0f
     val pixelRatio = if (imageWidth > 0 && imageHeight > 0) (tW * tH) / (imageWidth * imageHeight).toFloat() else 0.25f
@@ -130,6 +117,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                 try {
                     var name = "Image.jpg"
                     var sizeBytes = 0L
+
                     context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                         val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                         val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
@@ -140,7 +128,9 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                     }
 
                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+                    context.contentResolver.openInputStream(uri)?.use {
+                        BitmapFactory.decodeStream(it, null, options)
+                    }
 
                     withContext(Dispatchers.Main) {
                         imageUri = uri
@@ -150,11 +140,10 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                         imageSizeMb = sizeBytes / (1024f * 1024f)
                         imageExtension = name.substringAfterLast('.', "JPG").uppercase().take(3)
 
-                        targetWidth = "1080"
-                        targetHeight = "1080"
+                        targetWidth = options.outWidth.toString()
+                        targetHeight = options.outHeight.toString()
                         activePreset = "custom"
                         isComplete = false
-                        outputUri = null
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) { snackbarHostState.showSnackbar("Failed to read image.") }
@@ -176,103 +165,15 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                 onConvert = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     if (imageUri == null) return@ResizeBottomBar
-
-                    coroutineScope.launch(Dispatchers.IO) {
+                    // Dummy delay for Phase 3 UI testing. Final export comes in Phase 4.
+                    coroutineScope.launch {
                         isProcessing = true
-                        var pendingDestUri: Uri? = null
-
-                        try {
-                            val outW = targetWidth.toIntOrNull() ?: imageWidth
-                            val outH = targetHeight.toIntOrNull() ?: imageHeight
-
-                            val originalName = imageName.substringBeforeLast(".")
-                            val isPng = imageExtension == "PNG"
-                            val finalName = "${originalName}_resized.${if (isPng) "png" else "jpg"}"
-                            val mimeType = if (isPng) "image/png" else "image/jpeg"
-                            val compressFormat = if (isPng) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
-
-                            val options = BitmapFactory.Options()
-                            var sampleSize = 1
-                            while (imageWidth / sampleSize > outW * 2 || imageHeight / sampleSize > outH * 2) { sampleSize *= 2 }
-                            options.inSampleSize = sampleSize
-
-                            val original = context.contentResolver.openInputStream(imageUri!!)?.use {
-                                BitmapFactory.decodeStream(it, null, options)
-                            } ?: throw Exception("Failed to load image")
-
-                            val filter = resampleAlgo != "nearest"
-                            val scaledBitmap = Bitmap.createScaledBitmap(original, outW, outH, filter)
-                            if (scaledBitmap != original) original.recycle()
-
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                                val details = ContentValues().apply {
-                                    put(MediaStore.Images.Media.DISPLAY_NAME, finalName)
-                                    put(MediaStore.Images.Media.MIME_TYPE, mimeType)
-                                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FileEase")
-                                }
-                                pendingDestUri = context.contentResolver.insert(collection, details)
-                                pendingDestUri?.let { destUri ->
-                                    context.contentResolver.openOutputStream(destUri)?.use { out ->
-                                        scaledBitmap.compress(compressFormat, 95, out)
-                                    }
-                                }
-                            } else {
-                                @Suppress("DEPRECATION")
-                                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "FileEase")
-                                if (!dir.exists()) dir.mkdirs()
-                                val file = File(dir, finalName)
-                                FileOutputStream(file).use { out ->
-                                    scaledBitmap.compress(compressFormat, 95, out)
-                                }
-                                pendingDestUri = Uri.fromFile(file)
-                                MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf(mimeType), null)
-                            }
-
-                            scaledBitmap.recycle()
-
-                            withContext(Dispatchers.Main) {
-                                isProcessing = false
-                                isComplete = true
-                                outputUri = pendingDestUri
-
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
-                                } else {
-                                    @Suppress("DEPRECATION")
-                                    vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
-                                }
-                            }
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                            pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
-                            withContext(Dispatchers.Main) {
-                                isProcessing = false
-                                snackbarHostState.showSnackbar("Failed to resize image.")
-                            }
-                        }
+                        delay(1500)
+                        isProcessing = false
+                        isComplete = true
                     }
                 },
-                onShare = {
-                    outputUri?.let { uri ->
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "image/*"
-                            putExtra(Intent.EXTRA_STREAM, uri)
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        context.startActivity(Intent.createChooser(intent, "Share Image"))
-                    }
-                },
-                onOpen = {
-                    outputUri?.let { uri ->
-                        val intent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, "image/*")
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        context.startActivity(Intent.createChooser(intent, "Open Image"))
-                    }
-                },
-                onReset = { isComplete = false; outputUri = null; imageUri = null }
+                onReset = { isComplete = false; imageUri = null }
             )
         },
         contentWindowInsets = WindowInsets(0.dp)
@@ -286,7 +187,6 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
         ) {
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Subtitle
             Text(
                 text = "Scale image dimensions by pixels or percentage without distortion",
                 fontSize = 13.sp,
@@ -320,7 +220,10 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text(imageName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(end = 8.dp))
                                 Row(
-                                    modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainer).clickable(enabled = !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); imagePickerLauncher.launch("image/*") }.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainer).clickable(enabled = !isProcessing) {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        imagePickerLauncher.launch("image/*")
+                                    }.padding(horizontal = 8.dp, vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(Icons.Outlined.SwapHoriz, contentDescription = null, tint = Primary, modifier = Modifier.size(14.dp))
@@ -338,7 +241,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                             Row(modifier = Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Outlined.AspectRatio, contentDescription = null, tint = Primary, modifier = Modifier.size(13.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Original Ultra-HD Aspect", fontSize = 10.sp, color = Primary, fontWeight = FontWeight.Medium)
+                                Text("Original HD Aspect", fontSize = 10.sp, color = Primary, fontWeight = FontWeight.Medium)
                             }
                         }
                     }
@@ -349,7 +252,10 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                             .height(100.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(SurfaceContainerLow)
-                            .clickable { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); imagePickerLauncher.launch("image/*") },
+                            .clickable {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                imagePickerLauncher.launch("image/*")
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -384,7 +290,6 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                     .shadow(1.dp, RoundedCornerShape(12.dp))
                     .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
             ) {
-                // Top section with padding
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("Target Dimensions", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
@@ -398,9 +303,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                         }
                     }
 
-                    // Inputs
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        // Width
                         Column {
                             Row(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("Width", fontSize = 10.sp, color = OnSurfaceVariant)
@@ -422,7 +325,6 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                             )
                         }
 
-                        // Link Button
                         Box(modifier = Modifier.fillMaxWidth().height(24.dp).zIndex(1f), contentAlignment = Alignment.Center) {
                             Row(
                                 modifier = Modifier
@@ -438,7 +340,6 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                             }
                         }
 
-                        // Height
                         Column {
                             Row(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("Height", fontSize = 10.sp, color = OnSurfaceVariant)
@@ -462,7 +363,6 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                     }
                 }
 
-                // Quick Presets Container
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -496,7 +396,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Resampling Engine
+            // Phase 3: Resampling Engine
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -545,7 +445,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Storage Impact Projection Card
+            // Phase 3: Storage Impact Projection Card
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -564,7 +464,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                             modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLowest.copy(alpha = 0.2f)).padding(horizontal = 8.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("-$percentSavings% footprint", fontSize = 10.sp, color = OnPrimary, fontWeight = FontWeight.Bold)
+                            Text(if (percentSavings > 0) "-$percentSavings% footprint" else "+${percentSavings * -1}% footprint", fontSize = 10.sp, color = OnPrimary, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -587,7 +487,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                     }
 
                     Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Saved space: ~%.1f MB".format(savedMb), fontSize = 10.sp, color = OnPrimary.copy(alpha = 0.8f))
+                        Text(if (savedMb > 0) "Saved space: ~%.1f MB".format(savedMb) else "Footprint Increased", fontSize = 10.sp, color = OnPrimary.copy(alpha = 0.8f))
                         Text("Web & Mail Ready", fontSize = 10.sp, color = OnPrimary.copy(alpha = 0.8f))
                     }
                 }
@@ -595,7 +495,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Visual Proof Gallery Strip
+            // Phase 3: Visual Proof Gallery Strip
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -644,6 +544,8 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
         }
     }
 }
+
+// Sub-components
 
 @Composable
 private fun ModeSwitchButton(modifier: Modifier, icon: ImageVector, label: String, isSelected: Boolean, onClick: () -> Unit) {
@@ -771,8 +673,6 @@ private fun ResizeBottomBar(
     isEnabled: Boolean,
     targetDims: String,
     onConvert: () -> Unit,
-    onShare: () -> Unit,
-    onOpen: () -> Unit,
     onReset: () -> Unit
 ) {
     val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 12.dp, label = "buttonShape")
@@ -794,8 +694,8 @@ private fun ResizeBottomBar(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        ActionIcon(icon = Icons.Outlined.Share, label = "Share File", onClick = onShare)
-                        ActionIcon(icon = Icons.Outlined.OpenInNew, label = "Open File", onClick = onOpen)
+                        ActionIcon(icon = Icons.Outlined.Share, label = "Share File", onClick = { })
+                        ActionIcon(icon = Icons.Outlined.OpenInNew, label = "Open File", onClick = { })
                         ActionIcon(icon = Icons.Outlined.RestartAlt, label = "Resize New", onClick = onReset)
                     }
                 } else {
