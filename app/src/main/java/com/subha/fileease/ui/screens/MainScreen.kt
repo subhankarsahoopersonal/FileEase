@@ -3,41 +3,87 @@ package com.subha.fileease.ui.screens
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.isImeVisible
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.outlined.AutoFixHigh
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 
-sealed class BottomNavItem(val route: String, val title: String, val icon: ImageVector) {
-    object Home : BottomNavItem("home", "Home", Icons.Default.Home)
-    object Files : BottomNavItem("files", "Files", Icons.Default.Folder)
-    object PdfTools : BottomNavItem("pdf_tools", "PDFs", Icons.Default.Build)
-    object ImageTools : BottomNavItem("image_tools", "Studio", Icons.Default.Image)
+// Premium Dual-State Icon Setup
+sealed class BottomNavItem(val route: String, val title: String, val selectedIcon: ImageVector, val unselectedIcon: ImageVector) {
+    object Home : BottomNavItem("home", "Home", Icons.Filled.Home, Icons.Outlined.Home)
+    object Files : BottomNavItem("files", "Files", Icons.Filled.Folder, Icons.Outlined.Folder)
+    object PdfTools : BottomNavItem("pdf_tools", "PDFs", Icons.Filled.PictureAsPdf, Icons.Outlined.PictureAsPdf)
+    object ImageTools : BottomNavItem("image_tools", "Studio", Icons.Filled.AutoFixHigh, Icons.Outlined.AutoFixHigh)
+}
+
+fun Modifier.navBounceClick(onClick: () -> Unit): Modifier = composed {
+    var isPressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.85f else 1f,
+        animationSpec = spring(stiffness = 400f, dampingRatio = 0.6f),
+        label = "nav_bounce"
+    )
+
+    this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .pointerInput(Unit) {
+            while (true) {
+                awaitPointerEventScope {
+                    awaitFirstDown(requireUnconsumed = false)
+                    isPressed = true
+                    waitForUpOrCancellation()
+                    isPressed = false
+                }
+            }
+        }
+        .clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+            onClick = onClick
+        )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -58,7 +104,8 @@ fun MainScreen() {
     val isBottomBarVisible = !isKeyboardVisible && currentRoute in topLevelRoutes
 
     Scaffold(
-        containerColor = Color(0xFFF8FAFC)
+        containerColor = Color(0xFFFAF8FF),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { innerPadding ->
         Box(
             modifier = Modifier
@@ -70,12 +117,18 @@ fun MainScreen() {
                 topLevelRoutes = topLevelRoutes,
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFFF8FAFC))
+                    .background(Color(0xFFFAF8FF))
             )
 
             if (isBottomBarVisible) {
-                Box(modifier = Modifier.align(Alignment.BottomCenter)) {
-                    BottomNavigationBar(navController = navController)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(horizontal = 24.dp)
+                        .padding(bottom = 24.dp)
+                ) {
+                    FloatingBottomNavigationBar(navController = navController)
                 }
             }
         }
@@ -123,8 +176,10 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
             }
         }
     ) {
+        val screenPadding = Modifier.fillMaxSize()
+
         composable(BottomNavItem.Home.route) {
-            Box(modifier = Modifier.fillMaxSize().padding(bottom = 90.dp)) {
+            Box(modifier = screenPadding) {
                 HomeDashboardScreen(
                     onMergeClick = { navController.navigate("pdf_merge") },
                     onSplitClick = { navController.navigate("pdf_split") },
@@ -137,13 +192,13 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
         }
 
         composable(BottomNavItem.Files.route) {
-            Box(modifier = Modifier.fillMaxSize().padding(bottom = 90.dp)) {
+            Box(modifier = screenPadding) {
                 FileManagerScreen()
             }
         }
 
         composable(BottomNavItem.PdfTools.route) {
-            Box(modifier = Modifier.fillMaxSize().padding(bottom = 90.dp)) {
+            Box(modifier = screenPadding) {
                 PdfToolsScreen(
                     onMergeClick = { navController.navigate("pdf_merge") },
                     onSplitClick = { navController.navigate("pdf_split") },
@@ -156,7 +211,7 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
         }
 
         composable(BottomNavItem.ImageTools.route) {
-            Box(modifier = Modifier.fillMaxSize().padding(bottom = 90.dp)) {
+            Box(modifier = screenPadding) {
                 StudioScreen(
                     onImagesToPdfClick = { navController.navigate("images_to_pdf") },
                     onPdfToImagesClick = { navController.navigate("pdf_to_images") },
@@ -165,98 +220,144 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
                     onCropImageClick = { navController.navigate("crop_image") },
                     onResizeImageClick = { navController.navigate("resize_image") },
                     onCompressImageClick = { navController.navigate("image_compress") },
-                    onRotateImageClick = { navController.navigate("rotate_image") } // <-- INJECTED ROTATE NAV
+                    onRotateImageClick = { navController.navigate("rotate_image") }
                 )
             }
         }
 
-        composable("pdf_merge") {
-            PdfMergeScreen(onNavigateBack = { navController.popBackStack() })
-        }
-        composable("pdf_split") {
-            PdfSplitScreen(onNavigateBack = { navController.popBackStack() })
-        }
-        composable("pdf_compress") {
-            PdfCompressScreen(onNavigateBack = { navController.popBackStack() })
-        }
-        composable("pdf_rotate") {
-            PdfRotateScreen(onNavigateBack = { navController.popBackStack() })
-        }
-        composable("pdf_password") {
-            PdfPasswordScreen(onNavigateBack = { navController.popBackStack() })
-        }
-        composable("pdf_extract") {
-            PdfExtractScreen(onNavigateBack = { navController.popBackStack() })
-        }
-        composable("images_to_pdf") {
-            ImagesToPdfScreen(onNavigateBack = { navController.popBackStack() })
-        }
-        composable("pdf_to_images") {
-            PdfToImagesScreen(onNavigateBack = { navController.popBackStack() })
-        }
-        composable("jpg_to_png") {
-            JpgToPngScreen(onNavigateBack = { navController.popBackStack() })
-        }
-        composable("text_to_pdf") {
-            TextToPdfScreen(onNavigateBack = { navController.popBackStack() })
-        }
-        composable("crop_image") {
-            CropImageScreen(onNavigateBack = { navController.popBackStack() })
-        }
-        composable("image_compress") {
-            CompressImageScreen(onNavigateBack = { navController.popBackStack() })
-        }
-        composable("resize_image") {
-            ResizeImageScreen(onNavigateBack = { navController.popBackStack() })
-        }
-        // <-- NEW ROTATE IMAGE ROUTE ADDED HERE
-        composable("rotate_image") {
-            RotateImageScreen(onNavigateBack = { navController.popBackStack() })
-        }
+        composable("pdf_merge") { PdfMergeScreen(onNavigateBack = { navController.popBackStack() }) }
+        composable("pdf_split") { PdfSplitScreen(onNavigateBack = { navController.popBackStack() }) }
+        composable("pdf_compress") { PdfCompressScreen(onNavigateBack = { navController.popBackStack() }) }
+        composable("pdf_rotate") { PdfRotateScreen(onNavigateBack = { navController.popBackStack() }) }
+        composable("pdf_password") { PdfPasswordScreen(onNavigateBack = { navController.popBackStack() }) }
+        composable("pdf_extract") { PdfExtractScreen(onNavigateBack = { navController.popBackStack() }) }
+        composable("images_to_pdf") { ImagesToPdfScreen(onNavigateBack = { navController.popBackStack() }) }
+        composable("pdf_to_images") { PdfToImagesScreen(onNavigateBack = { navController.popBackStack() }) }
+        composable("jpg_to_png") { JpgToPngScreen(onNavigateBack = { navController.popBackStack() }) }
+        composable("text_to_pdf") { TextToPdfScreen(onNavigateBack = { navController.popBackStack() }) }
+        composable("crop_image") { CropImageScreen(onNavigateBack = { navController.popBackStack() }) }
+        composable("image_compress") { CompressImageScreen(onNavigateBack = { navController.popBackStack() }) }
+        composable("resize_image") { ResizeImageScreen(onNavigateBack = { navController.popBackStack() }) }
+        composable("rotate_image") { RotateImageScreen(onNavigateBack = { navController.popBackStack() }) }
     }
 }
 
 @Composable
-fun BottomNavigationBar(navController: NavHostController) {
+fun FloatingBottomNavigationBar(navController: NavHostController) {
     val items = listOf(
         BottomNavItem.Home,
         BottomNavItem.Files,
         BottomNavItem.PdfTools,
         BottomNavItem.ImageTools
     )
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    val selectedIndex = items.indexOfFirst { it.route == currentRoute }.coerceAtLeast(0)
 
-    NavigationBar(
-        containerColor = Color.White,
-        contentColor = Color(0xFF0F172A),
-        tonalElevation = 0.dp
-    ) {
-        val navBackStackEntry by navController.currentBackStackEntryAsState()
-        val currentRoute = navBackStackEntry?.destination?.route
-
-        items.forEach { item ->
-            NavigationBarItem(
-                icon = { Icon(imageVector = item.icon, contentDescription = item.title) },
-                label = { Text(text = item.title) },
-                selected = currentRoute == item.route,
-                onClick = {
-                    if (currentRoute != item.route) {
-                        navController.navigate(item.route) {
-                            navController.graph.startDestinationRoute?.let { route ->
-                                popUpTo(route) { saveState = true }
-                            }
-                            launchSingleTop = true
-                            restoreState = item.route != BottomNavItem.Home.route
-                        }
-                    }
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = Color(0xFF0066FF),
-                    selectedTextColor = Color(0xFF0066FF),
-                    indicatorColor = Color(0xFFEFF6FF),
-                    unselectedIconColor = Color(0xFF94A3B8),
-                    unselectedTextColor = Color(0xFF94A3B8)
-                )
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(
+                elevation = 24.dp,
+                shape = RoundedCornerShape(28.dp),
+                spotColor = Color(0xFF0066FF).copy(alpha = 0.15f),
+                ambientColor = Color(0xFF0066FF).copy(alpha = 0.05f)
             )
+            .background(Color.White, RoundedCornerShape(28.dp))
+            .padding(horizontal = 8.dp, vertical = 8.dp)
+            .height(64.dp)
+    ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val tabWidth = maxWidth / items.size
+
+            val indicatorOffset by animateDpAsState(
+                targetValue = tabWidth * selectedIndex,
+                animationSpec = spring(
+                    stiffness = 250f,
+                    dampingRatio = 0.65f
+                ),
+                label = "indicatorOffset"
+            )
+
+            Box(
+                modifier = Modifier
+                    .offset(x = indicatorOffset)
+                    .width(tabWidth)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0xFFEFF6FF))
+            )
+
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.SpaceAround,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                items.forEach { item ->
+                    val isSelected = currentRoute == item.route
+
+                    // Dynamic Dual-State Icon Assignment
+                    val currentIcon = if (isSelected) item.selectedIcon else item.unselectedIcon
+
+                    val contentColor by animateColorAsState(
+                        targetValue = if (isSelected) Color(0xFF0066FF) else Color(0xFF94A3B8),
+                        animationSpec = tween(300),
+                        label = "NavColorAnim"
+                    )
+
+                    val iconScale by animateFloatAsState(
+                        targetValue = if (isSelected) 1.25f else 1.0f,
+                        animationSpec = spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium),
+                        label = "IconScaleAnim"
+                    )
+
+                    val iconOffsetY by animateDpAsState(
+                        targetValue = if (isSelected) (-3).dp else 0.dp,
+                        animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMedium),
+                        label = "IconOffsetAnim"
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(20.dp))
+                            .navBounceClick {
+                                if (currentRoute != item.route) {
+                                    navController.navigate(item.route) {
+                                        navController.graph.startDestinationRoute?.let { route ->
+                                            popUpTo(route) { saveState = true }
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = item.route != BottomNavItem.Home.route
+                                    }
+                                }
+                            },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = currentIcon,
+                            contentDescription = item.title,
+                            tint = contentColor,
+                            modifier = Modifier
+                                .offset(y = iconOffsetY)
+                                .graphicsLayer {
+                                    scaleX = iconScale
+                                    scaleY = iconScale
+                                }
+                                .size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = item.title,
+                            fontSize = 11.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = contentColor
+                        )
+                    }
+                }
+            }
         }
     }
 }
