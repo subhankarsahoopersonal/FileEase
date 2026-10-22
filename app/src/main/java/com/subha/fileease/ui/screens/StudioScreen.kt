@@ -35,7 +35,8 @@ fun StudioScreen(
     onJpgToPngClick: () -> Unit = {},
     onTextToPdfClick: () -> Unit = {},
     onCropImageClick: () -> Unit = {},
-    onCompressImageClick: () -> Unit = {} // <-- INJECTED COMPRESS TRIGGER
+    onResizeImageClick: () -> Unit = {}, // <-- ADDED RESIZE TRIGGER
+    onCompressImageClick: () -> Unit = {}
 ) {
     Scaffold(
         containerColor = Surface,
@@ -115,7 +116,7 @@ fun StudioScreen(
                     modifier = Modifier.weight(1f),
                     title = "Resize Image",
                     icon = Icons.Outlined.OpenInFull,
-                    onClick = { /* Not yet implemented */ }
+                    onClick = onResizeImageClick // <-- CONNECTED TO CARD
                 )
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -124,7 +125,7 @@ fun StudioScreen(
                     modifier = Modifier.weight(1f),
                     title = "Compress Image",
                     icon = Icons.Outlined.Compress,
-                    onClick = onCompressImageClick // <-- CONNECTED TO CARD
+                    onClick = onCompressImageClick
                 )
                 StudioToolCard(
                     modifier = Modifier.weight(1f),
