@@ -1,5 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Base XML theme (Ensures smooth handoff to Compose) -->
+    <style name="Theme.FileEase" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#FAF8FF</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
 
-    <style name="Theme.FileEase" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Professional Splash Screen Theme -->
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#FAF8FF</item>
+        <!-- Use the new padded inset logo -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.FileEase</item>
+    </style>
 </resources>
