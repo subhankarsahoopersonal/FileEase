@@ -1,6 +1,7 @@
 package com.subha.fileease.ui.screens
 
 import android.content.ContentValues
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaScannerConnection
@@ -18,7 +19,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -40,6 +41,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -145,7 +147,6 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
         }
     }
 
-    // Launchers
     val singlePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
             imageUris = listOf(uri)
@@ -182,7 +183,6 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                     if (imageUris.isEmpty() || isProcessing) return@RotateBottomBar
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
 
-                    // PHASE 3: Batch IO Export Pipeline
                     coroutineScope.launch(Dispatchers.IO) {
                         isProcessing = true
                         processedCount = 0
@@ -426,7 +426,6 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                     }
                 }
 
-                // PHASE 3: Interactive Batch Reel
                 AnimatedVisibility(visible = isBatchMode) {
                     Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
                         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -434,7 +433,7 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                             Text("Select More", fontSize = 10.sp, color = RotPrimary, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { launchPicker() })
                         }
                         Row(
-                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             if (imageUris.isEmpty()) {
@@ -489,7 +488,7 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Fine-Tuning Horizon / Angle Dial
+            // PHASE 4: Fluid Pointer Physics Interactive Dial
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -518,36 +517,43 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                             .fillMaxWidth()
                             .height(48.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(RotSurfaceContainerLow),
+                            .background(RotSurfaceContainerLow)
+                            // Fluid Gesture Detection
+                            .pointerInput(Unit) {
+                                detectHorizontalDragGestures { _, dragAmount ->
+                                    if (!isProcessing) {
+                                        // 8 pixels per degree resistance
+                                        val newAngle = fineAngle - (dragAmount / 8f)
+                                        fineAngle = newAngle.coerceIn(-45f, 45f)
+                                    }
+                                }
+                            },
                         contentAlignment = Alignment.Center
                     ) {
+                        // Scrolling Ticks Canvas
                         androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize().alpha(0.4f)) {
                             val w = size.width
                             val h = size.height
                             if (w > 0f && h > 0f) {
-                                val numTicks = 30
-                                val spacing = w / numTicks
-                                for (i in 0..numTicks) {
-                                    val x = i * spacing
-                                    val isMajor = i % 5 == 0
-                                    val tickH = if (isMajor) h * 0.4f else h * 0.2f
-                                    drawLine(color = RotOutline, start = Offset(x, (h - tickH)/2), end = Offset(x, (h + tickH)/2), strokeWidth = if(isMajor) 1.5.dp.toPx() else 1.dp.toPx())
+                                val tickSpacing = 8.dp.toPx()
+                                val centerOffset = w / 2f
+
+                                for (degree in -45..45) {
+                                    val x = centerOffset + ((degree - fineAngle) * tickSpacing)
+                                    if (x in 0f..w) {
+                                        val isMajor = degree % 5 == 0
+                                        val tickH = if (isMajor) h * 0.4f else h * 0.2f
+                                        drawLine(
+                                            color = RotOutline,
+                                            start = Offset(x, (h - tickH)/2),
+                                            end = Offset(x, (h + tickH)/2),
+                                            strokeWidth = if(isMajor) 1.5.dp.toPx() else 1.dp.toPx()
+                                        )
+                                    }
                                 }
                             }
                         }
                         Box(modifier = Modifier.width(2.dp).fillMaxHeight(0.6f).background(RotPrimary.copy(alpha=0.4f)))
-
-                        Slider(
-                            value = fineAngle,
-                            onValueChange = { if(!isProcessing) fineAngle = it },
-                            valueRange = -45f..45f,
-                            colors = SliderDefaults.colors(
-                                thumbColor = Color.Transparent,
-                                activeTrackColor = Color.Transparent,
-                                inactiveTrackColor = Color.Transparent
-                            ),
-                            modifier = Modifier.fillMaxSize().alpha(0.01f)
-                        )
                     }
                     Row(modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("-45°", fontSize = 10.sp, color = RotOnSurfaceVariant)
@@ -559,7 +565,7 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Format & Processing Info Card
+            // Format Info Card
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -586,7 +592,7 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                     }
                 }
                 Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(RotSurfaceContainer).padding(horizontal = 8.dp, vertical = 2.dp)) {
-                    Text("Auto-Level", fontSize = 10.sp, color = RotOnSurfaceVariant)
+                    Text("Ready", fontSize = 10.sp, color = RotOnSurfaceVariant)
                 }
             }
 
