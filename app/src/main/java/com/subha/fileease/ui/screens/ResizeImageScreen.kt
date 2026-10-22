@@ -1,8 +1,17 @@
 package com.subha.fileease.ui.screens
 
-import android.net.Uri
-import android.provider.OpenableColumns
+import android.content.ContentValues
+import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaScannerConnection
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.provider.MediaStore
+import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -45,9 +54,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import kotlin.math.roundToInt
 
 // Exact Tailwind Color Tokens
@@ -74,6 +84,7 @@ private val OutlineVariant = Color(0xFFC2C6D8)
 fun ResizeImageScreen(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
+    val vibrator = remember { context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as Vibrator }
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -81,6 +92,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
     // Execution State
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
+    var outputUri by remember { mutableStateOf<Uri?>(null) }
 
     // Source Data
     var imageUri by remember { mutableStateOf<Uri?>(null) }
@@ -97,10 +109,11 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
     var maintainAspect by remember { mutableStateOf(true) }
     var activePreset by remember { mutableStateOf("custom") }
     var resampleAlgo by remember { mutableStateOf("bicubic") }
+    var selectedEncoding by remember { mutableStateOf("Original (JPG)") }
 
     val aspect = if (imageHeight > 0) imageWidth.toFloat() / imageHeight else 16f / 9f
 
-    // Phase 3: Dynamic Telemetry Calculations
+    // Dynamic Telemetry Calculations
     val tW = targetWidth.toFloatOrNull() ?: 0f
     val tH = targetHeight.toFloatOrNull() ?: 0f
     val pixelRatio = if (imageWidth > 0 && imageHeight > 0) (tW * tH) / (imageWidth * imageHeight).toFloat() else 0.25f
@@ -144,6 +157,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                         targetHeight = options.outHeight.toString()
                         activePreset = "custom"
                         isComplete = false
+                        outputUri = null
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) { snackbarHostState.showSnackbar("Failed to read image.") }
@@ -165,15 +179,116 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                 onConvert = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     if (imageUri == null) return@ResizeBottomBar
-                    // Dummy delay for Phase 3 UI testing. Final export comes in Phase 4.
-                    coroutineScope.launch {
+
+                    coroutineScope.launch(Dispatchers.IO) {
                         isProcessing = true
-                        delay(1500)
-                        isProcessing = false
-                        isComplete = true
+                        var pendingDestUri: Uri? = null
+
+                        try {
+                            val outW = targetWidth.toIntOrNull() ?: imageWidth
+                            val outH = targetHeight.toIntOrNull() ?: imageHeight
+
+                            val originalName = imageName.substringBeforeLast(".")
+                            val isPng = selectedEncoding == "Export as PNG"
+                            val finalName = "${originalName}_resized.${if (isPng) "png" else "jpg"}"
+                            val mimeType = if (isPng) "image/png" else "image/jpeg"
+                            val compressFormat = if (isPng) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
+
+                            // OOM Safe Decoder Setup
+                            val options = BitmapFactory.Options()
+                            var sampleSize = 1
+                            while (imageWidth / sampleSize > outW * 2 || imageHeight / sampleSize > outH * 2) { sampleSize *= 2 }
+                            options.inSampleSize = sampleSize
+
+                            val original = context.contentResolver.openInputStream(imageUri!!)?.use {
+                                BitmapFactory.decodeStream(it, null, options)
+                            } ?: throw Exception("Failed to load source image")
+
+                            // Resampling Interpolation Engine
+                            val filter = resampleAlgo != "nearest"
+                            val scaledBitmap = Bitmap.createScaledBitmap(original, outW, outH, filter)
+                            if (scaledBitmap != original) original.recycle()
+
+                            // Scoped Storage Export
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                                val details = ContentValues().apply {
+                                    put(MediaStore.Images.Media.DISPLAY_NAME, finalName)
+                                    put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+                                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FileEase")
+                                }
+                                pendingDestUri = context.contentResolver.insert(collection, details)
+                                pendingDestUri?.let { destUri ->
+                                    context.contentResolver.openOutputStream(destUri)?.use { out ->
+                                        scaledBitmap.compress(compressFormat, 95, out)
+                                    }
+                                }
+                            } else {
+                                @Suppress("DEPRECATION")
+                                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "FileEase")
+                                if (!dir.exists()) dir.mkdirs()
+                                val file = File(dir, finalName)
+                                FileOutputStream(file).use { out ->
+                                    scaledBitmap.compress(compressFormat, 95, out)
+                                }
+                                pendingDestUri = Uri.fromFile(file)
+                                MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf(mimeType), null)
+                            }
+
+                            scaledBitmap.recycle()
+
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                isComplete = true
+                                outputUri = pendingDestUri
+
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 100, 120), intArrayOf(0, 150, 0, 255), -1))
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    vibrator.vibrate(longArrayOf(0, 80, 100, 120), -1)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                snackbarHostState.showSnackbar("Failed to resize image.")
+                            }
+                        }
                     }
                 },
-                onReset = { isComplete = false; imageUri = null }
+                onShare = {
+                    outputUri?.let { uri ->
+                        try {
+                            val isPng = selectedEncoding == "Export as PNG"
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = if (isPng) "image/png" else "image/jpeg"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Share Image"))
+                        } catch (e: Exception) {
+                            coroutineScope.launch { snackbarHostState.showSnackbar("Error launching share sheet.") }
+                        }
+                    }
+                },
+                onOpen = {
+                    outputUri?.let { uri ->
+                        try {
+                            val isPng = selectedEncoding == "Export as PNG"
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, if (isPng) "image/png" else "image/jpeg")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Open Image"))
+                        } catch (e: Exception) {
+                            coroutineScope.launch { snackbarHostState.showSnackbar("No gallery app installed.") }
+                        }
+                    }
+                },
+                onReset = { isComplete = false; outputUri = null; imageUri = null }
             )
         },
         contentWindowInsets = WindowInsets(0.dp)
@@ -311,16 +426,19 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                             }
                             DimensionInputBox(
                                 value = targetWidth,
+                                isEnabled = !isProcessing,
                                 icon = Icons.Outlined.East,
                                 unit = "px",
                                 onValueChange = { newVal ->
                                     val digits = newVal.filter { it.isDigit() }
-                                    targetWidth = digits
-                                    if (maintainAspect && digits.isNotEmpty()) {
-                                        val w = digits.toFloatOrNull() ?: 0f
-                                        targetHeight = (w / aspect).roundToInt().toString()
+                                    if (digits.length <= 4) {
+                                        targetWidth = digits
+                                        if (maintainAspect && digits.isNotEmpty()) {
+                                            val w = digits.toFloatOrNull() ?: 0f
+                                            targetHeight = (w / aspect).roundToInt().toString()
+                                        }
+                                        activePreset = "custom"
                                     }
-                                    activePreset = "custom"
                                 }
                             )
                         }
@@ -330,7 +448,10 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(50))
                                     .background(if (maintainAspect) SurfaceContainerHigh else SurfaceContainer)
-                                    .clickable { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); maintainAspect = !maintainAspect }
+                                    .clickable(enabled = !isProcessing) {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        maintainAspect = !maintainAspect
+                                    }
                                     .padding(horizontal = 12.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -347,16 +468,19 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                             }
                             DimensionInputBox(
                                 value = targetHeight,
+                                isEnabled = !isProcessing,
                                 icon = Icons.Outlined.South,
                                 unit = "px",
                                 onValueChange = { newVal ->
                                     val digits = newVal.filter { it.isDigit() }
-                                    targetHeight = digits
-                                    if (maintainAspect && digits.isNotEmpty()) {
-                                        val h = digits.toFloatOrNull() ?: 0f
-                                        targetWidth = (h * aspect).roundToInt().toString()
+                                    if (digits.length <= 4) {
+                                        targetHeight = digits
+                                        if (maintainAspect && digits.isNotEmpty()) {
+                                            val h = digits.toFloatOrNull() ?: 0f
+                                            targetWidth = (h * aspect).roundToInt().toString()
+                                        }
+                                        activePreset = "custom"
                                     }
-                                    activePreset = "custom"
                                 }
                             )
                         }
@@ -374,19 +498,19 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                         Text(if (activePreset == "custom") "Custom Mode" else "Current: $activePreset%", fontSize = 10.sp, color = Primary, fontWeight = FontWeight.Medium)
                     }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PresetButton(Modifier.weight(1f), "25%", activePreset == "25") {
+                        PresetButton(Modifier.weight(1f), "25%", activePreset == "25", !isProcessing) {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             activePreset = "25"; targetWidth = (imageWidth * 0.25).roundToInt().toString(); targetHeight = (imageHeight * 0.25).roundToInt().toString()
                         }
-                        PresetButton(Modifier.weight(1f), "50%", activePreset == "50") {
+                        PresetButton(Modifier.weight(1f), "50%", activePreset == "50", !isProcessing) {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             activePreset = "50"; targetWidth = (imageWidth * 0.5).roundToInt().toString(); targetHeight = (imageHeight * 0.5).roundToInt().toString()
                         }
-                        PresetButton(Modifier.weight(1f), "75%", activePreset == "75") {
+                        PresetButton(Modifier.weight(1f), "75%", activePreset == "75", !isProcessing) {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             activePreset = "75"; targetWidth = (imageWidth * 0.75).roundToInt().toString(); targetHeight = (imageHeight * 0.75).roundToInt().toString()
                         }
-                        PresetButton(Modifier.weight(1f), "Custom", activePreset == "custom", icon = Icons.Outlined.Tune) {
+                        PresetButton(Modifier.weight(1f), "Custom", activePreset == "custom", !isProcessing, icon = Icons.Outlined.Tune) {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             activePreset = "custom"
                         }
@@ -396,7 +520,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Phase 3: Resampling Engine
+            // Resampling Engine
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -420,6 +544,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                         badge = "Recommended",
                         desc = "Smooth transitions & sharp clarity optimal for photos, drawings, and renders.",
                         isSelected = resampleAlgo == "bicubic",
+                        isEnabled = !isProcessing,
                         onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); resampleAlgo = "bicubic" }
                     )
                     RadioOptionCard(
@@ -429,6 +554,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                         badgeTextColor = OnSurfaceVariant,
                         desc = "Medium sharpness balance engineered for speedy batch compression on low-power devices.",
                         isSelected = resampleAlgo == "bilinear",
+                        isEnabled = !isProcessing,
                         onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); resampleAlgo = "bilinear" }
                     )
                     RadioOptionCard(
@@ -438,6 +564,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                         badgeTextColor = OnSurfaceVariant,
                         desc = "Hard-edged pixel replication designed specifically for pixel art, screenshots, and line art.",
                         isSelected = resampleAlgo == "nearest",
+                        isEnabled = !isProcessing,
                         onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); resampleAlgo = "nearest" }
                     )
                 }
@@ -445,7 +572,31 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Phase 3: Storage Impact Projection Card
+            // Output Encoding Format
+            Text("Output Encoding", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                EncodingCard(
+                    modifier = Modifier.weight(1f),
+                    title = "Original (JPG)",
+                    subtitle = "Small file size",
+                    isSelected = selectedEncoding == "Original (JPG)",
+                    isEnabled = !isProcessing,
+                    onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedEncoding = "Original (JPG)" }
+                )
+                EncodingCard(
+                    modifier = Modifier.weight(1f),
+                    title = "Export as PNG",
+                    subtitle = "High fidelity",
+                    isSelected = selectedEncoding == "Export as PNG",
+                    isEnabled = !isProcessing,
+                    onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedEncoding = "Export as PNG" }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Storage Impact Projection Card
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -495,7 +646,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Phase 3: Visual Proof Gallery Strip
+            // Visual Proof Gallery Strip
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -570,12 +721,13 @@ private fun ModeSwitchButton(modifier: Modifier, icon: ImageVector, label: Strin
 }
 
 @Composable
-private fun DimensionInputBox(value: String, icon: ImageVector, unit: String, onValueChange: (String) -> Unit) {
+private fun DimensionInputBox(value: String, icon: ImageVector, unit: String, isEnabled: Boolean, onValueChange: (String) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(SurfaceContainerLow)
+            .alpha(if (isEnabled) 1f else 0.5f)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -584,6 +736,7 @@ private fun DimensionInputBox(value: String, icon: ImageVector, unit: String, on
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
+            enabled = isEnabled,
             keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
             textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface),
             cursorBrush = SolidColor(Primary),
@@ -594,7 +747,7 @@ private fun DimensionInputBox(value: String, icon: ImageVector, unit: String, on
 }
 
 @Composable
-private fun PresetButton(modifier: Modifier, label: String, isSelected: Boolean, icon: ImageVector? = null, onClick: () -> Unit) {
+private fun PresetButton(modifier: Modifier, label: String, isSelected: Boolean, isEnabled: Boolean, icon: ImageVector? = null, onClick: () -> Unit) {
     val bg = if (isSelected) PrimaryContainer else SurfaceContainerLowest
     val textCol = if (isSelected) OnPrimary else OnSurfaceVariant
     val weight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium
@@ -604,7 +757,8 @@ private fun PresetButton(modifier: Modifier, label: String, isSelected: Boolean,
             .shadow(1.dp, RoundedCornerShape(8.dp))
             .clip(RoundedCornerShape(8.dp))
             .background(bg)
-            .clickable { onClick() }
+            .clickable(enabled = isEnabled) { onClick() }
+            .alpha(if (isEnabled) 1f else 0.5f)
             .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
@@ -618,7 +772,32 @@ private fun PresetButton(modifier: Modifier, label: String, isSelected: Boolean,
 }
 
 @Composable
-private fun RadioOptionCard(title: String, badge: String, badgeColor: Color = PrimaryContainer, badgeTextColor: Color = OnPrimary, desc: String, isSelected: Boolean, onClick: () -> Unit) {
+private fun EncodingCard(modifier: Modifier, title: String, subtitle: String, isSelected: Boolean, isEnabled: Boolean, onClick: () -> Unit) {
+    val bg = if (isSelected) SurfaceContainer else SurfaceContainerLowest
+    val borderCol = if (isSelected) Color.Transparent else SurfaceContainer
+
+    Row(
+        modifier = modifier
+            .shadow(if (isSelected) 0.dp else 1.dp, RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .border(1.dp, borderCol, RoundedCornerShape(12.dp))
+            .clickable(enabled = isEnabled) { onClick() }
+            .alpha(if (isEnabled) 1f else 0.5f)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(Color.White).border(if(isSelected) 5.dp else 1.dp, if(isSelected) Primary else OutlineVariant, CircleShape))
+        Spacer(modifier = Modifier.width(10.dp))
+        Column {
+            Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+            Text(subtitle, fontSize = 10.sp, color = OnSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun RadioOptionCard(title: String, badge: String, badgeColor: Color = PrimaryContainer, badgeTextColor: Color = OnPrimary, desc: String, isSelected: Boolean, isEnabled: Boolean, onClick: () -> Unit) {
     val bg = if (isSelected) SurfaceContainerHigh.copy(alpha=0.6f) else SurfaceContainerLowest
 
     Row(
@@ -626,7 +805,8 @@ private fun RadioOptionCard(title: String, badge: String, badgeColor: Color = Pr
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(bg)
-            .clickable { onClick() }
+            .clickable(enabled = isEnabled) { onClick() }
+            .alpha(if (isEnabled) 1f else 0.5f)
             .padding(12.dp),
         verticalAlignment = Alignment.Top
     ) {
@@ -673,6 +853,8 @@ private fun ResizeBottomBar(
     isEnabled: Boolean,
     targetDims: String,
     onConvert: () -> Unit,
+    onShare: () -> Unit,
+    onOpen: () -> Unit,
     onReset: () -> Unit
 ) {
     val cornerRadius by animateDpAsState(targetValue = if (isProcessing) 50.dp else 12.dp, label = "buttonShape")
@@ -694,8 +876,8 @@ private fun ResizeBottomBar(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        ActionIcon(icon = Icons.Outlined.Share, label = "Share File", onClick = { })
-                        ActionIcon(icon = Icons.Outlined.OpenInNew, label = "Open File", onClick = { })
+                        ActionIcon(icon = Icons.Outlined.Share, label = "Share File", onClick = onShare)
+                        ActionIcon(icon = Icons.Outlined.OpenInNew, label = "Open File", onClick = onOpen)
                         ActionIcon(icon = Icons.Outlined.RestartAlt, label = "Resize New", onClick = onReset)
                     }
                 } else {
