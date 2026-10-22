@@ -1,7 +1,6 @@
 package com.subha.fileease.ui.screens
 
 import android.content.ContentValues
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaScannerConnection
@@ -14,6 +13,7 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -79,7 +79,6 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
 
-    // Safely retrieve Vibrator to prevent Service Context crashes
     val vibrator = remember {
         try { context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as? Vibrator }
         catch (e: Exception) { null }
@@ -102,6 +101,9 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
     var scaleY by remember { mutableFloatStateOf(1f) }
     var isGridVisible by remember { mutableStateOf(true) }
     var isBatchMode by remember { mutableStateOf(false) }
+
+    // Execution State
+    var isProcessing by remember { mutableStateOf(false) }
 
     val totalRotation = baseRotation + fineAngle
 
@@ -134,6 +136,7 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                     fineAngle = 0f
                     scaleX = 1f
                     scaleY = 1f
+                    isProcessing = false
                 }
             }
         }
@@ -148,7 +151,87 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                 scaleX = scaleX,
                 scaleY = scaleY,
                 isBatchMode = isBatchMode,
-                onSaveClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) }
+                isProcessing = isProcessing,
+                onSaveClick = {
+                    if (imageUri == null || isProcessing) return@RotateBottomBar
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+
+                    // PHASE 2: OOM-Safe Matrix Export Pipeline
+                    coroutineScope.launch(Dispatchers.IO) {
+                        isProcessing = true
+                        try {
+                            val originalName = imageName.substringBeforeLast(".")
+                            val finalName = "${originalName}_rotated.jpg"
+
+                            // 1. Calculate Safe Memory Bounds (Max 2500px dimension)
+                            val MAX_DIMENSION = 2500f
+                            val decodeOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            context.contentResolver.openInputStream(imageUri!!)?.use {
+                                BitmapFactory.decodeStream(it, null, decodeOptions)
+                            }
+
+                            var sampleSize = 1
+                            while (decodeOptions.outWidth / sampleSize > MAX_DIMENSION || decodeOptions.outHeight / sampleSize > MAX_DIMENSION) {
+                                sampleSize *= 2
+                            }
+
+                            // 2. Decode Safely
+                            val loadOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                            val original = context.contentResolver.openInputStream(imageUri!!)?.use {
+                                BitmapFactory.decodeStream(it, null, loadOptions)
+                            } ?: throw Exception("Failed to load image")
+
+                            // 3. Apply Hardware Matrix Transforms
+                            val matrix = android.graphics.Matrix().apply {
+                                val safeRot = if (totalRotation.isNaN()) 0f else totalRotation
+                                postRotate(safeRot)
+                                postScale(scaleX, scaleY)
+                            }
+                            val rotatedBitmap = Bitmap.createBitmap(original, 0, 0, original.width, original.height, matrix, true)
+                            if (rotatedBitmap != original) original.recycle()
+
+                            // 4. Scoped Storage MediaStore Export
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                                val details = ContentValues().apply {
+                                    put(MediaStore.Images.Media.DISPLAY_NAME, finalName)
+                                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FileEase")
+                                }
+                                val destUri = context.contentResolver.insert(collection, details)
+                                destUri?.let { uri ->
+                                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                                        rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                                    }
+                                }
+                            } else {
+                                @Suppress("DEPRECATION")
+                                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "FileEase")
+                                if (!dir.exists()) dir.mkdirs()
+                                val file = File(dir, finalName)
+                                FileOutputStream(file).use { out ->
+                                    rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                                }
+                                MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("image/jpeg"), null)
+                            }
+                            rotatedBitmap.recycle()
+
+                            // 5. Success Feedback
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    vibrator?.vibrate(100)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            withContext(Dispatchers.Main) { isProcessing = false }
+                        }
+                    }
+                }
             )
         },
         contentWindowInsets = WindowInsets(0.dp)
@@ -162,43 +245,44 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
         ) {
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Mode Selector & Header Info
-            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Row(
-                        modifier = Modifier.clip(RoundedCornerShape(50)).background(RotSurfaceContainer).padding(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        ModeButton(
-                            label = "Single Image",
-                            icon = Icons.Outlined.Photo,
-                            isSelected = !isBatchMode,
-                            onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); isBatchMode = false }
-                        )
-                        ModeButton(
-                            label = "Batch Folder (12)",
-                            icon = Icons.Outlined.FolderCopy,
-                            isSelected = isBatchMode,
-                            onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); isBatchMode = true }
-                        )
-                    }
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(RotSurfaceContainer)
-                            .clickable {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                baseRotation = 0f; fineAngle = 0f; scaleX = 1f; scaleY = 1f
-                            }
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Outlined.RestartAlt, contentDescription = null, tint = RotOnSurfaceVariant, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Reset", fontSize = 10.sp, color = RotOnSurfaceVariant, fontWeight = FontWeight.Medium)
-                    }
+            // Mode Selector
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(RotSurfaceContainer).padding(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ModeButton(
+                        label = "Single Image",
+                        icon = Icons.Outlined.Image,
+                        isSelected = !isBatchMode,
+                        onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); isBatchMode = false }
+                    )
+                    ModeButton(
+                        label = "Batch Folder (12)",
+                        icon = Icons.Outlined.Folder,
+                        isSelected = isBatchMode,
+                        onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); isBatchMode = true }
+                    )
                 }
-                Text("Adjust image angle, flip orientation, and level horizons seamlessly.", fontSize = 12.sp, color = RotOnSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(RotSurfaceContainer)
+                        .clickable {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            baseRotation = 0f; fineAngle = 0f; scaleX = 1f; scaleY = 1f
+                        }
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Outlined.Refresh, contentDescription = null, tint = RotOnSurfaceVariant, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Reset", fontSize = 10.sp, color = RotOnSurfaceVariant, fontWeight = FontWeight.Medium)
+                }
             }
 
             // Interactive Preview Card
@@ -228,7 +312,7 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                             modifier = Modifier.clip(RoundedCornerShape(50)).background(RotInverseSurface.copy(alpha=0.85f)).padding(horizontal = 10.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Outlined.Explore, contentDescription = null, tint = RotInverseOnSurface, modifier = Modifier.size(15.dp))
+                            Icon(Icons.Outlined.Navigation, contentDescription = null, tint = RotInverseOnSurface, modifier = Modifier.size(15.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             val safeTotal = if (totalRotation.isNaN()) 0f else totalRotation
                             val sign = if (safeTotal > 0) "+" else ""
@@ -242,7 +326,7 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                                     modifier = Modifier.clip(RoundedCornerShape(50)).background(RotSecondaryContainer).padding(horizontal = 8.dp, vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Outlined.Flip, contentDescription = null, tint = RotOnSecondary, modifier = Modifier.size(12.dp))
+                                    Icon(Icons.Outlined.SwapHoriz, contentDescription = null, tint = RotOnSecondary, modifier = Modifier.size(12.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text("Flipped", fontSize = 10.sp, color = RotOnSecondary, fontWeight = FontWeight.Medium)
                                 }
@@ -256,7 +340,7 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                                     .clickable { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); isGridVisible = !isGridVisible },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Outlined.Grid3x3, contentDescription = null, tint = if (isGridVisible) RotPrimary else RotOnSurfaceVariant, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Outlined.Apps, contentDescription = null, tint = if (isGridVisible) RotPrimary else RotOnSurfaceVariant, modifier = Modifier.size(18.dp))
                             }
                         }
                     }
@@ -270,7 +354,7 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(16.dp)
-                            .clickable { imagePickerLauncher.launch("image/*") },
+                            .clickable(enabled = !isProcessing) { imagePickerLauncher.launch("image/*") },
                         contentAlignment = Alignment.Center
                     ) {
                         if (imageUri != null) {
@@ -327,32 +411,14 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                             Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(RotSurfaceContainer).alpha(0.85f)) {
                                 AsyncImage(model = imageUri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                             }
+                            Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(RotSurfaceContainer).alpha(0.85f)) {
+                                AsyncImage(model = imageUri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            }
                             Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(RotSurfaceContainerHigh), contentAlignment = Alignment.Center) {
-                                Text("+10", fontSize = 10.sp, color = RotOnSurfaceVariant)
+                                Text("+9", fontSize = 10.sp, color = RotOnSurfaceVariant)
                             }
                         }
                     }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Lossless Quality Engine Banner
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(RotSurfaceContainer)
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(RotPrimaryContainer.copy(alpha=0.15f)), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.Verified, contentDescription = null, tint = RotPrimary, modifier = Modifier.size(20.dp))
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text("100% Lossless Engine", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RotOnSurface)
-                    Text("EXIF orientation rewrite · Zero re-encoding artifacts", fontSize = 12.sp, color = RotOnSurfaceVariant, maxLines = 1)
                 }
             }
 
@@ -365,10 +431,10 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                     Text("Tap to rotate/mirror", fontSize = 10.sp, color = RotOnSurfaceVariant)
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    DirectionalButton(Modifier.weight(1f), Icons.Outlined.RotateLeft, "-90°", "Left") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); baseRotation -= 90f }
-                    DirectionalButton(Modifier.weight(1f), Icons.Outlined.RotateRight, "+90°", "Right") { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); baseRotation += 90f }
-                    DirectionalButton(Modifier.weight(1f), Icons.Outlined.Flip, "Flip X", "Horizontal", 0f) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); scaleX = if(scaleX == 1f) -1f else 1f }
-                    DirectionalButton(Modifier.weight(1f), Icons.Outlined.Flip, "Flip Y", "Vertical", 90f) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); scaleY = if(scaleY == 1f) -1f else 1f }
+                    DirectionalButton(Modifier.weight(1f), Icons.Outlined.Refresh, "-90°", "Left", -90f) { if(!isProcessing){ haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); baseRotation -= 90f } }
+                    DirectionalButton(Modifier.weight(1f), Icons.Outlined.Refresh, "+90°", "Right", 90f) { if(!isProcessing){ haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); baseRotation += 90f } }
+                    DirectionalButton(Modifier.weight(1f), Icons.Outlined.SwapHoriz, "Flip X", "Horizontal", 0f) { if(!isProcessing){ haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); scaleX = if(scaleX == 1f) -1f else 1f } }
+                    DirectionalButton(Modifier.weight(1f), Icons.Outlined.SwapHoriz, "Flip Y", "Vertical", 90f) { if(!isProcessing){ haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); scaleY = if(scaleY == 1f) -1f else 1f } }
                 }
             }
 
@@ -384,7 +450,7 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
             ) {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Straighten, contentDescription = null, tint = RotPrimary, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Outlined.LinearScale, contentDescription = null, tint = RotPrimary, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Horizon Straighten Dial", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RotOnSurface)
                     }
@@ -424,19 +490,14 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
 
                         Slider(
                             value = fineAngle,
-                            onValueChange = { fineAngle = it },
+                            onValueChange = { if(!isProcessing) fineAngle = it },
                             valueRange = -45f..45f,
-                            colors = SliderDefaults.colors(
-                                thumbColor = Color.Transparent,
-                                activeTrackColor = Color.Transparent,
-                                inactiveTrackColor = Color.Transparent
-                            ),
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier.fillMaxSize().alpha(0.01f)
                         )
                     }
                     Row(modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("-45°", fontSize = 10.sp, color = RotOnSurfaceVariant)
-                        Text("0° Center", fontSize = 10.sp, color = RotPrimary, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fineAngle = 0f })
+                        Text("0° Center", fontSize = 10.sp, color = RotPrimary, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { if(!isProcessing){ haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); fineAngle = 0f } })
                         Text("+45°", fontSize = 10.sp, color = RotOnSurfaceVariant)
                     }
                 }
@@ -456,7 +517,7 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(RotSurfaceContainer), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Outlined.PhotoLibrary, contentDescription = null, tint = RotPrimary, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Outlined.PhotoAlbum, contentDescription = null, tint = RotPrimary, modifier = Modifier.size(18.dp))
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
@@ -545,14 +606,7 @@ private fun RotateImageTopBar(onNavigateBack: () -> Unit) {
                 Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = RotOnSurface)
             }
             Spacer(modifier = Modifier.width(4.dp))
-            Column {
-                Text("Rotate Image", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RotOnSurface, letterSpacing = (-0.01).sp)
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clip(RoundedCornerShape(50)).background(RotSurfaceContainerHigh.copy(alpha=0.6f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(RotPrimaryContainer))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Offline Engine Active • 100% On-device", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = RotOnSurfaceVariant)
-                }
-            }
+            Text("Rotate Image", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RotOnSurface, letterSpacing = (-0.01).sp)
         }
     }
 }
@@ -563,6 +617,7 @@ private fun RotateBottomBar(
     scaleX: Float,
     scaleY: Float,
     isBatchMode: Boolean,
+    isProcessing: Boolean,
     onSaveClick: () -> Unit
 ) {
     Column(
@@ -575,7 +630,7 @@ private fun RotateBottomBar(
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
             Row(modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Sync, contentDescription = null, tint = RotPrimary, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Outlined.Refresh, contentDescription = null, tint = RotPrimary, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
 
                     val safeTotal = if (totalRotation.isNaN()) 0f else totalRotation
@@ -595,15 +650,25 @@ private fun RotateBottomBar(
                     .height(48.dp)
                     .shadow(4.dp, RoundedCornerShape(12.dp))
                     .clip(RoundedCornerShape(12.dp))
-                    .background(RotPrimaryContainer)
-                    .clickable { onSaveClick() }
+                    .background(if(isProcessing) RotOutline else RotPrimaryContainer)
+                    .clickable(enabled = !isProcessing) { onSaveClick() }
                     .padding(horizontal = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Save, contentDescription = null, tint = RotOnPrimaryContainer, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(if (isBatchMode) "Apply to 12 Photos & Save" else "Apply Rotation & Save", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RotOnPrimaryContainer)
+                AnimatedContent(targetState = isProcessing, label = "SaveStateAnim") { processing ->
+                    if (processing) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(color = RotOnPrimaryContainer, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Processing...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RotOnPrimaryContainer)
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = RotOnPrimaryContainer, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(if (isBatchMode) "Apply to 12 Photos & Save" else "Apply Rotation & Save", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RotOnPrimaryContainer)
+                        }
+                    }
                 }
             }
         }
