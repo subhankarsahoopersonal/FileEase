@@ -51,6 +51,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.core.content.ContextCompat
 import com.subha.fileease.R
 import kotlinx.coroutines.Dispatchers
@@ -201,6 +202,7 @@ fun DashboardTopBar() {
         modifier = Modifier
             .fillMaxWidth()
             .background(BgColor.copy(alpha = 0.95f))
+            .statusBarsPadding() // <-- ADD THIS: Safely pushes content below the system clock/battery
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

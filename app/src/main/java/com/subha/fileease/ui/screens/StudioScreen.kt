@@ -1,7 +1,6 @@
 package com.subha.fileease.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,7 +36,7 @@ fun StudioScreen(
     onCropImageClick: () -> Unit = {},
     onResizeImageClick: () -> Unit = {},
     onCompressImageClick: () -> Unit = {},
-    onRotateImageClick: () -> Unit = {} // <-- ADDED ROTATE TRIGGER
+    onRotateImageClick: () -> Unit = {}
 ) {
     Scaffold(
         containerColor = Surface,
@@ -47,6 +46,7 @@ fun StudioScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .statusBarsPadding() // FIX: Pushes the entire Studio list safely below the system icons
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
         ) {
@@ -132,11 +132,11 @@ fun StudioScreen(
                     modifier = Modifier.weight(1f),
                     title = "Rotate Image",
                     icon = Icons.Outlined.RotateRight,
-                    onClick = onRotateImageClick // <-- CONNECTED TO CARD
+                    onClick = onRotateImageClick
                 )
             }
 
-            Spacer(modifier = Modifier.height(100.dp))
+            Spacer(modifier = Modifier.height(130.dp)) // Added proper clear space for floating nav bar
         }
     }
 }
@@ -174,7 +174,7 @@ fun StudioToolCard(
             .heightIn(min = 108.dp)
             .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = Color.Black.copy(alpha = 0.08f))
             .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
-            .clickable { onClick() }
+            .bounceClick { onClick() } // FIX: Replaced standard click with physics bounce mechanism
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center

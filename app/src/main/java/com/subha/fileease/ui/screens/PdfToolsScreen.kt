@@ -2,7 +2,6 @@ package com.subha.fileease.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -25,8 +24,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
-
-// Note: Color variables automatically inherited from HomeDashboardScreen.kt
 
 data class PdfTool(
     val title: String,
@@ -60,7 +57,6 @@ fun PdfToolsScreen(
     Scaffold(
         containerColor = BgColor,
         topBar = { PdfToolsTopBar() },
-        // FIX 1: Prevents nested Scaffolds from double-applying system window insets
         contentWindowInsets = WindowInsets(0.dp),
         snackbarHost = {
             SnackbarHost(hostState = snackbarHostState) { data ->
@@ -97,7 +93,6 @@ fun PdfToolsScreen(
                 .background(BgColor)
                 .padding(innerPadding)
         ) {
-            // Header Section
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -118,17 +113,14 @@ fun PdfToolsScreen(
                 )
             }
 
-            // Grid Section
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 modifier = Modifier
-                    // FIX 2: weight(1f) anchors the grid correctly without constraint stretching
                     .weight(1f)
                     .padding(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
-                // FIX 3: Reduced bottom padding from 112.dp to 24.dp since MainScreen handles nav bar
-                contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
+                contentPadding = PaddingValues(top = 12.dp, bottom = 130.dp) // Padded for the floating bar
             ) {
                 items(tools, key = { it.title }) { tool ->
                     PdfToolCard(
@@ -157,6 +149,7 @@ private fun PdfToolsTopBar() {
         modifier = Modifier
             .fillMaxWidth()
             .background(BgColor.copy(alpha = 0.95f))
+            .statusBarsPadding() // FIX: Pushes the TopBar safely below system icons
             .padding(horizontal = 20.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -202,7 +195,7 @@ fun PdfToolCard(tool: PdfTool, onClick: () -> Unit) {
             .background(SurfaceColor, RoundedCornerShape(16.dp))
             .border(1.dp, Slate100, RoundedCornerShape(16.dp))
             .clip(RoundedCornerShape(16.dp))
-            .clickable { onClick() }
+            .bounceClick { onClick() } // FIX: Upgraded to physics-driven bounce mechanics
             .padding(16.dp),
         horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.Top

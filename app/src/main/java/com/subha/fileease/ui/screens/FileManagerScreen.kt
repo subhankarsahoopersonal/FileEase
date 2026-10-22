@@ -104,7 +104,6 @@ fun FileManagerScreen() {
     var newFileName by remember { mutableStateOf(TextFieldValue("")) }
     var renameError by remember { mutableStateOf("") }
 
-    // 1. STAGING STATE: Holds the file currently being moved
     var stagedFileForMove by remember { mutableStateOf<File?>(null) }
 
     val rootPath = remember { Environment.getExternalStorageDirectory() }
@@ -136,7 +135,6 @@ fun FileManagerScreen() {
         }
     }
 
-    // Navigates into folders
     val changeDirectory = { newDir: File ->
         focusManager.clearFocus()
         if (!newDir.exists()) {
@@ -161,7 +159,7 @@ fun FileManagerScreen() {
 
     BackHandler(enabled = currentDir.absolutePath != rootPath.absolutePath || isSelectionMode || stagedFileForMove != null) {
         if (stagedFileForMove != null) {
-            stagedFileForMove = null // Cancel move on back press
+            stagedFileForMove = null
         } else if (isSelectionMode) {
             selectedFiles = emptySet()
         } else {
@@ -206,7 +204,6 @@ fun FileManagerScreen() {
         }
     }
 
-    // Folder Content Loader
     LaunchedEffect(currentDir, hasStoragePermission) {
         if (hasStoragePermission) {
             val newFiles = withContext(Dispatchers.IO) {
@@ -237,7 +234,6 @@ fun FileManagerScreen() {
         }
     }
 
-    // Search Loader
     LaunchedEffect(searchQuery, hasStoragePermission) {
         if (searchQuery.isNotBlank() && hasStoragePermission) {
             isSearching = true
@@ -320,7 +316,6 @@ fun FileManagerScreen() {
                         }
                     )
                 } else {
-                    // Suppress add folder button if moving a file or searching
                     FileManagerTopBar(
                         showAddFolder = searchQuery.isBlank() && hasStoragePermission && stagedFileForMove == null,
                         onAddFolderClick = {
@@ -345,7 +340,6 @@ fun FileManagerScreen() {
         ) {
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Only show search if we aren't currently moving a file
             if (stagedFileForMove == null) {
                 FileSearchBar(
                     query = searchQuery,
@@ -363,9 +357,8 @@ fun FileManagerScreen() {
             Spacer(modifier = Modifier.height(8.dp))
 
             Box(modifier = Modifier.fillMaxSize()) {
-                // Smoothly animate the list padding so it doesn't snap when the bar vanishes
                 val listBottomPadding by animateDpAsState(
-                    targetValue = if (stagedFileForMove != null) 96.dp else 90.dp,
+                    targetValue = if (stagedFileForMove != null) 96.dp else 130.dp, // Added extra padding for Floating bar
                     label = "listBottomPadding"
                 )
 
@@ -403,7 +396,6 @@ fun FileManagerScreen() {
                             items = displayedFiles,
                             key = { file -> file.absolutePath }
                         ) { file ->
-                            // Don't render the file in the list if it's currently being moved
                             if (stagedFileForMove?.absolutePath != file.absolutePath || searchQuery.isNotBlank()) {
                                 Box(modifier = Modifier.padding(bottom = 8.dp)) {
                                     val (icon, bg, fg) = getFileIconAndColors(file)
@@ -473,7 +465,6 @@ fun FileManagerScreen() {
                     }
                 }
 
-                // 2. THE STAGING BAR (Compact Premium UI)
                 FloatingMoveBar(
                     stagedFile = stagedFileForMove,
                     currentDir = currentDir,
@@ -531,7 +522,7 @@ fun FileManagerScreen() {
                 },
                 onMove = {
                     stagedFileForMove = selectedFileForOptions
-                    searchQuery = "" // Clear search if moving from search results
+                    searchQuery = ""
                     showBottomSheet = false
                 },
                 onDelete = {
@@ -584,7 +575,6 @@ fun FileManagerScreen() {
                 if (newFile.exists()) {
                     renameError = "A file with this name already exists"
                 } else {
-
                     val updatedList = filesList.map { if (it.absolutePath == oldFile.absolutePath) newFile else it }
                         .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.getDefault()) }))
 
@@ -596,9 +586,7 @@ fun FileManagerScreen() {
                         focusManager.clearFocus()
                         renameSheetState.hide()
                         showRenameSheet = false
-
                         delay(150)
-
                         val targetIndex = updatedList.indexOfFirst { it.absolutePath == newFile.absolutePath }
                         if (targetIndex != -1) {
                             listState.animateScrollToItem(targetIndex)
@@ -765,9 +753,6 @@ fun FileManagerScreen() {
     }
 }
 
-// -------------------------------------------------------------
-// CREATE FOLDER BOTTOM SHEET
-// -------------------------------------------------------------
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateFolderBottomSheet(
@@ -932,9 +917,6 @@ fun CreateFolderBottomSheet(
     }
 }
 
-// -------------------------------------------------------------
-// UI COMPONENTS - PREMIUM COMPACT FLOATING BAR
-// -------------------------------------------------------------
 @Composable
 fun FloatingMoveBar(
     stagedFile: File?,
@@ -944,7 +926,6 @@ fun FloatingMoveBar(
     onConfirmMove: (File) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Cache the file so the exit animation has data to render when stagedFile becomes null
     var lastStagedFile by remember { mutableStateOf(stagedFile) }
     if (stagedFile != null) {
         lastStagedFile = stagedFile
@@ -964,7 +945,6 @@ fun FloatingMoveBar(
     ) {
         val fileToRender = stagedFile ?: lastStagedFile ?: return@AnimatedVisibility
 
-        // Dynamic State Validation using the cached file
         val isAlreadyInCurrentDir = fileToRender.parentFile?.absolutePath == currentDir.absolutePath
         val isTryingToMoveIntoSelf = fileToRender.isDirectory && currentDir.absolutePath.startsWith(fileToRender.absolutePath)
         val nameCollision = existingFiles.any { it.name.equals(fileToRender.name, ignoreCase = true) }
@@ -992,7 +972,6 @@ fun FloatingMoveBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // 1. File Icon Context
                 Box(
                     modifier = Modifier
                         .size(38.dp)
@@ -1003,7 +982,6 @@ fun FloatingMoveBar(
                     Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(20.dp))
                 }
 
-                // 2. Texts (Filename + Status)
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = fileToRender.name,
@@ -1028,7 +1006,6 @@ fun FloatingMoveBar(
                     )
                 }
 
-                // 3. Compact Circular Cancel Button
                 Box(
                     modifier = Modifier
                         .size(36.dp)
@@ -1040,7 +1017,6 @@ fun FloatingMoveBar(
                     Icon(Icons.Outlined.Close, contentDescription = "Cancel", tint = TextSecondary, modifier = Modifier.size(18.dp))
                 }
 
-                // 4. Pill-shaped Move Button
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
@@ -1061,9 +1037,6 @@ fun FloatingMoveBar(
     }
 }
 
-// -------------------------------------------------------------
-// NATIVE INTENT ROUTING
-// -------------------------------------------------------------
 private fun openFileWithIntent(context: Context, file: File) {
     try {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
@@ -1088,9 +1061,6 @@ private fun openFileWithIntent(context: Context, file: File) {
     }
 }
 
-// -------------------------------------------------------------
-// HELPER FUNCTIONS
-// -------------------------------------------------------------
 private suspend fun searchFilesGlobally(context: Context, query: String, currentDir: File): List<File> {
     val results = mutableSetOf<File>()
 
@@ -1155,9 +1125,6 @@ private fun getFileIconAndColors(file: File): Triple<ImageVector, Color, Color> 
     }
 }
 
-// -------------------------------------------------------------
-// TOP BARS
-// -------------------------------------------------------------
 @Composable
 fun FileManagerTopBar(
     showAddFolder: Boolean = true,
@@ -1167,6 +1134,7 @@ fun FileManagerTopBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(SurfaceColor.copy(alpha = 0.95f))
+            .statusBarsPadding() // FIX: Forces the TopBar underneath the system icons
             .padding(horizontal = 20.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -1196,6 +1164,7 @@ fun SelectionTopBar(selectedCount: Int, onClear: () -> Unit, onDeleteAll: () -> 
         modifier = Modifier
             .fillMaxWidth()
             .background(Blue50)
+            .statusBarsPadding() // FIX: Pushes the Selection TopBar down safely
             .padding(horizontal = 20.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
