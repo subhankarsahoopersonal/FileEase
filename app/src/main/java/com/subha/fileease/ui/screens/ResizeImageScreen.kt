@@ -151,8 +151,8 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                         imageSizeMb = sizeBytes / (1024f * 1024f)
                         imageExtension = name.substringAfterLast('.', "JPG").uppercase().take(3)
 
-                        targetWidth = "1080"
-                        targetHeight = "1080"
+                        targetWidth = options.outWidth.toString()
+                        targetHeight = options.outHeight.toString()
                         activePreset = "custom"
                         isComplete = false
                         outputUri = null
@@ -390,9 +390,9 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                             modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainer).padding(horizontal = 8.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(PrimaryContainer))
+                            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(if (maintainAspect) PrimaryContainer else OutlineVariant))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(if(maintainAspect) "Constraint Locked" else "Unlocked", fontSize = 10.sp, color = Primary, fontWeight = FontWeight.Medium)
+                            Text(if(maintainAspect) "Constraint Locked" else "Unlocked", fontSize = 10.sp, color = if(maintainAspect) Primary else OnSurfaceVariant, fontWeight = FontWeight.Medium)
                         }
                     }
 
@@ -421,22 +421,23 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                             )
                         }
 
-                        Box(modifier = Modifier.fillMaxWidth().height(24.dp).zIndex(1f), contentAlignment = Alignment.Center) {
+                        // FIXED: Replaced cropped height(16.dp) with standard padding allowing full rendering
+                        Box(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).zIndex(1f), contentAlignment = Alignment.Center) {
                             Row(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(50))
                                     .background(SurfaceContainerLowest)
-                                    .border(1.dp, if(maintainAspect) Primary else OutlineVariant, RoundedCornerShape(50))
+                                    .border(1.dp, if (maintainAspect) Primary else OutlineVariant, RoundedCornerShape(50))
                                     .clickable(enabled = !isProcessing) {
                                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         maintainAspect = !maintainAspect
                                     }
-                                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                                    .padding(horizontal = 14.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(if (maintainAspect) Icons.Outlined.Link else Icons.Outlined.LinkOff, contentDescription = null, tint = if (maintainAspect) Primary else OnSurfaceVariant, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(if (maintainAspect) "Maintain Aspect Ratio" else "Unlocked", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = if (maintainAspect) Primary else OnSurfaceVariant)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(if (maintainAspect) "Maintain Aspect Ratio" else "Unlocked", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (maintainAspect) Primary else OnSurfaceVariant)
                             }
                         }
 
@@ -717,7 +718,7 @@ private fun DimensionInputBox(value: String, icon: ImageVector, unit: String, is
             onValueChange = onValueChange,
             enabled = isEnabled,
             keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
-            textStyle = LocalTextStyle.current.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface),
+            textStyle = LocalTextStyle.current.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface),
             cursorBrush = SolidColor(Primary),
             modifier = Modifier.weight(1f)
         )
@@ -873,23 +874,15 @@ private fun ResizeBottomBar(
                             contentAlignment = Alignment.Center
                         ) {
                             AnimatedContent(targetState = isProcessing, label = "btnState") { processing ->
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                                     if (processing) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            CircularProgressIndicator(color = contentColor, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text("Resampling...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
-                                        }
-                                        Text("", color = Color.Transparent)
+                                        CircularProgressIndicator(color = contentColor, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Resampling...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                                     } else {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Outlined.PhotoSizeSelectLarge, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text("Resize & Save Image", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = contentColor)
-                                        }
-                                        Box(modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainerLowest.copy(alpha=0.2f)).padding(horizontal = 8.dp, vertical = 4.dp)) {
-                                            Text(targetDims, fontSize = 10.sp, fontWeight = FontWeight.Medium, color = contentColor)
-                                        }
+                                        Icon(Icons.Outlined.PhotoSizeSelectLarge, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Resize & Save Image", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = contentColor)
                                     }
                                 }
                             }
