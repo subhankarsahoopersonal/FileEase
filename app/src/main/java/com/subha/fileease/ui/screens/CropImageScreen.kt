@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -17,10 +18,7 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,6 +27,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -48,7 +49,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -57,6 +58,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.roundToInt
 
 // Exact Tailwind Color Tokens
 private val Background = Color(0xFFFAF8FF)
@@ -66,16 +68,13 @@ private val SurfaceContainerLow = Color(0xFFF2F3FF)
 private val SurfaceContainer = Color(0xFFEAEDFF)
 private val SurfaceContainerHigh = Color(0xFFE2E7FF)
 private val InverseSurface = Color(0xFF283044)
-private val InverseOnSurface = Color(0xFFEEF0FF)
 private val OnSurface = Color(0xFF131B2E)
 private val OnSurfaceVariant = Color(0xFF424656)
 private val Primary = Color(0xFF0050CB)
-private val OnPrimary = Color(0xFFFFFFFF)
 private val PrimaryContainer = Color(0xFF0066FF)
 private val OnPrimaryContainer = Color(0xFFF8F7FF)
-private val SecondaryContainer = Color(0xFF2170E4)
 private val Outline = Color(0xFF727687)
-private val OutlineVariant = Color(0xFFC2C6D8) // FIXED: Re-added missing token
+private val OutlineVariant = Color(0xFFC2C6D8)
 
 @Composable
 fun CropImageScreen(onNavigateBack: () -> Unit) {
@@ -86,19 +85,39 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
     val scrollState = rememberScrollState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // State
+    // Execution State
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
     var outputUri by remember { mutableStateOf<Uri?>(null) }
-    var showCropOverlay by remember { mutableStateOf(false) }
 
-    // Image Data
+    // Source Data
     var imageUri by remember { mutableStateOf<Uri?>(null) }
     var imageName by remember { mutableStateOf("") }
     var imageWidth by remember { mutableIntStateOf(0) }
     var imageHeight by remember { mutableIntStateOf(0) }
-    var imageSizeMb by remember { mutableFloatStateOf(0f) }
-    var imageExtension by remember { mutableStateOf("JPG") }
+
+    // Editor Viewport Matrix State
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
+    var rotationDegrees by remember { mutableFloatStateOf(0f) }
+    var viewportWidthPx by remember { mutableFloatStateOf(1f) }
+    var viewportHeightPx by remember { mutableFloatStateOf(1f) }
+
+    // Tool Configurations
+    var selectedAspectRatio by remember { mutableStateOf("1:1 Square") }
+    var targetWidth by remember { mutableStateOf("1080") }
+    var targetHeight by remember { mutableStateOf("1080") }
+    var isRatioLocked by remember { mutableStateOf(true) }
+    var lockedRatio by remember { mutableFloatStateOf(1f) }
+    var selectedEncoding by remember { mutableStateOf("Original (JPG)") }
+
+    // Dynamically calculate the active aspect ratio for the viewport
+    val currentRatio = remember(targetWidth, targetHeight) {
+        val w = targetWidth.toFloatOrNull() ?: 1080f
+        val h = targetHeight.toFloatOrNull() ?: 1080f
+        (if (h > 0) w / h else 1f).coerceIn(0.2f, 5f)
+    }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -107,34 +126,25 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
             coroutineScope.launch(Dispatchers.IO) {
                 try {
                     var name = "Image.jpg"
-                    var sizeBytes = 0L
-
                     context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                         val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                        val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
-                        if (cursor.moveToFirst()) {
-                            name = cursor.getString(nameIdx) ?: "Image.jpg"
-                            sizeBytes = cursor.getLong(sizeIdx)
-                        }
+                        if (cursor.moveToFirst()) name = cursor.getString(nameIdx) ?: "Image.jpg"
                     }
 
                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    context.contentResolver.openInputStream(uri)?.use {
-                        BitmapFactory.decodeStream(it, null, options)
-                    }
+                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
 
                     withContext(Dispatchers.Main) {
                         imageUri = uri
                         imageName = name
                         imageWidth = options.outWidth
                         imageHeight = options.outHeight
-                        imageSizeMb = sizeBytes / (1024f * 1024f)
-                        imageExtension = name.substringAfterLast('.', "JPG").uppercase().take(3)
+
+                        scale = 1f; offsetX = 0f; offsetY = 0f; rotationDegrees = 0f
                         isComplete = false
                         outputUri = null
                     }
                 } catch (e: Exception) {
-                    e.printStackTrace()
                     withContext(Dispatchers.Main) { snackbarHostState.showSnackbar("Failed to read image.") }
                 }
             }
@@ -151,6 +161,8 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                     isProcessing = isProcessing,
                     isComplete = isComplete,
                     isEnabled = imageUri != null,
+                    originalDimensions = if(imageWidth > 0) "${imageWidth} x $imageHeight" else "2400 x 1800",
+                    croppedDimensions = "${targetWidth.takeIf { it.isNotEmpty() } ?: "0"} x ${targetHeight.takeIf { it.isNotEmpty() } ?: "0"} px",
                     onConvert = {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         if (imageUri == null) return@CropImageBottomBar
@@ -160,29 +172,67 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                             var pendingDestUri: Uri? = null
 
                             try {
-                                val originalName = imageName.substringBeforeLast(".")
-                                val finalName = "${originalName}_saved.jpg"
+                                val isPng = selectedEncoding == "Export as PNG"
+                                val targetExt = if (isPng) "png" else "jpg"
+                                val targetMime = if (isPng) "image/png" else "image/jpeg"
+                                val compressFormat = if (isPng) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
 
-                                val options = BitmapFactory.Options()
+                                val originalName = imageName.substringBeforeLast(".")
+                                val finalName = "${originalName}_cropped.$targetExt"
+
+                                // Safely decode original into memory
+                                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                context.contentResolver.openInputStream(imageUri!!)?.use { BitmapFactory.decodeStream(it, null, options) }
+
                                 var sampleSize = 1
-                                while (imageWidth / sampleSize > 4000 || imageHeight / sampleSize > 4000) { sampleSize *= 2 }
+                                while (options.outWidth / sampleSize > 4000 || options.outHeight / sampleSize > 4000) { sampleSize *= 2 }
+                                options.inJustDecodeBounds = false
                                 options.inSampleSize = sampleSize
 
-                                val bitmap = context.contentResolver.openInputStream(imageUri!!)?.use {
+                                val original = context.contentResolver.openInputStream(imageUri!!)?.use {
                                     BitmapFactory.decodeStream(it, null, options)
                                 } ?: throw Exception("Failed to load source image")
 
+                                // Rotation Buffer
+                                var activeBitmap = original
+                                if (rotationDegrees % 360f != 0f) {
+                                    val rotMatrix = Matrix().apply { postRotate(rotationDegrees) }
+                                    activeBitmap = Bitmap.createBitmap(original, 0, 0, original.width, original.height, rotMatrix, true)
+                                    if (activeBitmap != original) original.recycle()
+                                }
+
+                                // Native Canvas Coordinate Mapping Engine
+                                val outW = targetWidth.toFloatOrNull() ?: 1080f
+                                val outH = targetHeight.toFloatOrNull() ?: 1080f
+
+                                val resultBitmap = Bitmap.createBitmap(outW.toInt(), outH.toInt(), Bitmap.Config.ARGB_8888)
+                                val canvas = Canvas(resultBitmap)
+                                val matrix = Matrix()
+
+                                val scaleToFill = maxOf(outW / activeBitmap.width, outH / activeBitmap.height)
+                                matrix.postTranslate((outW - activeBitmap.width) / 2f, (outH - activeBitmap.height) / 2f)
+                                matrix.postScale(scaleToFill, scaleToFill, outW / 2f, outH / 2f)
+
+                                val transformScaleMultiplierX = outW / viewportWidthPx
+                                val transformScaleMultiplierY = outH / viewportHeightPx
+
+                                matrix.postScale(scale, scale, outW / 2f, outH / 2f)
+                                matrix.postTranslate(offsetX * transformScaleMultiplierX, offsetY * transformScaleMultiplierY)
+
+                                canvas.drawBitmap(activeBitmap, matrix, Paint(Paint.FILTER_BITMAP_FLAG))
+
+                                // Write to MediaStore
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                     val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                                     val details = ContentValues().apply {
                                         put(MediaStore.Images.Media.DISPLAY_NAME, finalName)
-                                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                                        put(MediaStore.Images.Media.MIME_TYPE, targetMime)
                                         put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FileEase")
                                     }
                                     pendingDestUri = context.contentResolver.insert(collection, details)
                                     pendingDestUri?.let { destUri ->
                                         context.contentResolver.openOutputStream(destUri)?.use { out ->
-                                            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+                                            resultBitmap.compress(compressFormat, 100, out)
                                         }
                                     }
                                 } else {
@@ -191,12 +241,14 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                                     if (!dir.exists()) dir.mkdirs()
                                     val file = File(dir, finalName)
                                     FileOutputStream(file).use { out ->
-                                        bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+                                        resultBitmap.compress(compressFormat, 100, out)
                                     }
                                     pendingDestUri = Uri.fromFile(file)
+                                    MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf(targetMime), null)
                                 }
 
-                                bitmap.recycle()
+                                activeBitmap.recycle()
+                                resultBitmap.recycle()
 
                                 withContext(Dispatchers.Main) {
                                     isProcessing = false
@@ -215,7 +267,7 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                                 pendingDestUri?.let { context.contentResolver.delete(it, null, null) }
                                 withContext(Dispatchers.Main) {
                                     isProcessing = false
-                                    snackbarHostState.showSnackbar("Failed to save image.")
+                                    snackbarHostState.showSnackbar("Failed to crop image.")
                                 }
                             }
                         }
@@ -223,8 +275,9 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                     onShare = {
                         outputUri?.let { uri ->
                             try {
+                                val isPng = selectedEncoding == "Export as PNG"
                                 val intent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "image/jpeg"
+                                    type = if (isPng) "image/png" else "image/jpeg"
                                     putExtra(Intent.EXTRA_STREAM, uri)
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                 }
@@ -237,8 +290,9 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
                     onOpen = {
                         outputUri?.let { uri ->
                             try {
+                                val isPng = selectedEncoding == "Export as PNG"
                                 val intent = Intent(Intent.ACTION_VIEW).apply {
-                                    setDataAndType(uri, "image/jpeg")
+                                    setDataAndType(uri, if (isPng) "image/png" else "image/jpeg")
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                 }
                                 context.startActivity(Intent.createChooser(intent, "Open Image"))
@@ -265,330 +319,369 @@ fun CropImageScreen(onNavigateBack: () -> Unit) {
             ) {
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Source Image Card
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .shadow(1.dp, RoundedCornerShape(12.dp))
-                        .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
-                        .padding(16.dp)
-                ) {
-                    Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("SOURCE FILE", fontSize = 10.sp, color = OnSurfaceVariant, letterSpacing = 0.5.sp, fontWeight = FontWeight.Medium)
-                        if (imageUri != null) {
-                            Row(
-                                modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceContainer).padding(horizontal = 8.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(SecondaryContainer))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Ready", fontSize = 10.sp, color = OnSurfaceVariant)
-                            }
-                        }
+                if (imageUri != null) {
+                    // Top Tags
+                    Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TagChip(Icons.Outlined.Tune, "Lossless Preview", PrimaryContainer, Primary)
+                        TagChip(Icons.Outlined.Memory, "GPU Accelerated", SurfaceContainer, OnSurfaceVariant)
                     }
 
-                    if (imageUri != null) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainer)) {
-                                AsyncImage(
-                                    model = imageUri,
-                                    contentDescription = "Source Image",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                                Box(modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp).clip(RoundedCornerShape(4.dp)).background(InverseSurface.copy(alpha = 0.85f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                                    Text(imageExtension, fontSize = 9.sp, fontWeight = FontWeight.Medium, color = InverseOnSurface)
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(imageName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("$imageWidth × $imageHeight px", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
-                                Row(modifier = Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(SurfaceContainer).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                        Text("%.1f MB".format(imageSizeMb), fontSize = 11.sp, color = OnSurface)
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(PrimaryContainer)
-                                        .clickable(enabled = !isProcessing) {
-                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            showCropOverlay = true
-                                        }
-                                        .alpha(if (isProcessing) 0.5f else 1f)
-                                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("Crop", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = OnPrimaryContainer)
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(SurfaceContainer)
-                                        .clickable(enabled = !isProcessing) {
-                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            imagePickerLauncher.launch("image/*")
-                                        }
-                                        .alpha(if (isProcessing) 0.5f else 1f)
-                                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("Change", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Primary)
-                                }
-                            }
-                        }
-                    } else {
-                        Box(
+                    // Inline Cropper Viewport
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .shadow(1.dp, RoundedCornerShape(12.dp))
+                            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+                            .padding(12.dp)
+                    ) {
+                        // Viewport Layout
+                        BoxWithConstraints(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(84.dp)
+                                .aspectRatio(currentRatio)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(SurfaceContainerLow)
-                                .clickable {
-                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    imagePickerLauncher.launch("image/*")
+                                .background(InverseSurface)
+                                .pointerInput(currentRatio, rotationDegrees) {
+                                    detectTransformGestures { _, pan, zoom, _ ->
+                                        if (isProcessing) return@detectTransformGestures
+                                        scale = (scale * zoom).coerceIn(1f, 5f)
+                                        val maxOffsetX = (viewportWidthPx * scale - viewportWidthPx) / 2f
+                                        val maxOffsetY = (viewportHeightPx * scale - viewportHeightPx) / 2f
+                                        offsetX = (offsetX + pan.x).coerceIn(-maxOffsetX, maxOffsetX)
+                                        offsetY = (offsetY + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
+                                    }
                                 },
                             contentAlignment = Alignment.Center
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Outlined.AddPhotoAlternate, contentDescription = null, tint = Primary)
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text("Tap to browse gallery", fontSize = 13.sp, color = Outline, fontWeight = FontWeight.Medium)
+                            viewportWidthPx = constraints.maxWidth.toFloat()
+                            viewportHeightPx = constraints.maxHeight.toFloat()
+
+                            AsyncImage(
+                                model = imageUri,
+                                contentDescription = "Viewport",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer(
+                                        rotationZ = rotationDegrees,
+                                        scaleX = scale,
+                                        scaleY = scale,
+                                        translationX = offsetX,
+                                        translationY = offsetY
+                                    )
+                            )
+
+                            // Interactive Overlay UI
+                            Box(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                                Box(modifier = Modifier.fillMaxSize().border(1.dp, Color.White.copy(alpha=0.6f))) {
+                                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
+                                        Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha=0.4f)))
+                                        Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha=0.4f)))
+                                    }
+                                    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                                        Box(Modifier.fillMaxHeight().width(1.dp).background(Color.White.copy(alpha=0.4f)))
+                                        Box(Modifier.fillMaxHeight().width(1.dp).background(Color.White.copy(alpha=0.4f)))
+                                    }
+                                }
+
+                                Box(modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp).clip(RoundedCornerShape(50)).background(InverseSurface.copy(alpha=0.7f)).padding(horizontal = 12.dp, vertical = 4.dp)) {
+                                    Text("${targetWidth.takeIf { it.isNotEmpty() } ?: "0"} x ${targetHeight.takeIf { it.isNotEmpty() } ?: "0"} px", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
+                                }
+
+                                CornerMarker(Modifier.align(Alignment.TopStart))
+                                CornerMarker(Modifier.align(Alignment.TopEnd))
+                                CornerMarker(Modifier.align(Alignment.BottomStart))
+                                CornerMarker(Modifier.align(Alignment.BottomEnd))
+
+                                Box(modifier = Modifier.align(Alignment.BottomEnd).offset(x = 12.dp, y = 12.dp).size(36.dp).shadow(2.dp, CircleShape).background(Color.White, CircleShape).clickable(enabled = !isProcessing) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    selectedAspectRatio = "Freeform"
+                                    isRatioLocked = false
+                                }, contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Outlined.GridOn, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Tools Row
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ToolButton(Modifier.weight(1f), Icons.Outlined.RestartAlt, "Reset", !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); scale=1f; offsetX=0f; offsetY=0f; rotationDegrees=0f }
+                            ToolButton(Modifier.weight(1f), Icons.Outlined.FilterCenterFocus, "Center", !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); offsetX=0f; offsetY=0f }
+                            ToolButton(Modifier.weight(1f), Icons.Outlined.RotateRight, "Rotate 90°", !isProcessing) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); rotationDegrees += 90f }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // Aspect Ratio Area
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Aspect Ratio", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+                        Text("Custom Grid", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Primary, modifier = Modifier.clickable(enabled = !isProcessing) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            selectedAspectRatio = "Freeform"
+                            isRatioLocked = false
+                        })
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RatioChip(modifier = Modifier.weight(1f), label = "Freeform", icon = Icons.Outlined.CropFree, isSelected = selectedAspectRatio == "Freeform", !isProcessing) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            selectedAspectRatio = "Freeform"
+                            isRatioLocked = false
+                        }
+                        RatioChip(modifier = Modifier.weight(1f), label = "1:1 Square", icon = Icons.Outlined.CropSquare, isSelected = selectedAspectRatio == "1:1 Square", !isProcessing) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            selectedAspectRatio = "1:1 Square"
+                            targetWidth = "1080"
+                            targetHeight = "1080"
+                            lockedRatio = 1f
+                            isRatioLocked = true
+                        }
+                        RatioChip(modifier = Modifier.weight(1f), label = "4:3 Standard", icon = Icons.Outlined.CropLandscape, isSelected = selectedAspectRatio == "4:3 Standard", !isProcessing) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            selectedAspectRatio = "4:3 Standard"
+                            targetWidth = "1440"
+                            targetHeight = "1080"
+                            lockedRatio = 4f / 3f
+                            isRatioLocked = true
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // Target Canvas Pixels
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .shadow(1.dp, RoundedCornerShape(16.dp))
+                            .background(SurfaceContainerLowest, RoundedCornerShape(16.dp))
+                            .padding(16.dp)
+                    ) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.Straighten, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Target Canvas Pixels", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+                            }
+                            Text("Unit: PX", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant)
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Width", fontSize = 11.sp, color = OnSurfaceVariant, modifier = Modifier.padding(bottom = 6.dp))
+                                DimensionInput(
+                                    value = targetWidth,
+                                    isEnabled = !isProcessing,
+                                    onValueChange = { newText ->
+                                        val digits = newText.filter { it.isDigit() }
+                                        if (digits.length <= 4) {
+                                            targetWidth = digits
+                                            if (isRatioLocked && digits.isNotEmpty()) {
+                                                val w = digits.toFloatOrNull() ?: 0f
+                                                targetHeight = (w / lockedRatio).roundToInt().toString()
+                                            } else if (!isRatioLocked) {
+                                                selectedAspectRatio = "Freeform"
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+
+                            Box(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp).size(36.dp).clip(CircleShape).background(SurfaceContainer).clickable(enabled = !isProcessing) {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                if (!isRatioLocked) {
+                                    val w = targetWidth.toFloatOrNull() ?: 1f
+                                    val h = targetHeight.toFloatOrNull() ?: 1f
+                                    lockedRatio = if (h > 0) w / h else 1f
+                                }
+                                isRatioLocked = !isRatioLocked
+                            }, contentAlignment = Alignment.Center) {
+                                Icon(if (isRatioLocked) Icons.Outlined.Lock else Icons.Outlined.LockOpen, contentDescription = null, tint = Primary, modifier = Modifier.size(18.dp))
+                            }
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Height", fontSize = 11.sp, color = OnSurfaceVariant, modifier = Modifier.padding(bottom = 6.dp))
+                                DimensionInput(
+                                    value = targetHeight,
+                                    isEnabled = !isProcessing,
+                                    onValueChange = { newText ->
+                                        val digits = newText.filter { it.isDigit() }
+                                        if (digits.length <= 4) {
+                                            targetHeight = digits
+                                            if (isRatioLocked && digits.isNotEmpty()) {
+                                                val h = digits.toFloatOrNull() ?: 0f
+                                                targetWidth = (h * lockedRatio).roundToInt().toString()
+                                            } else if (!isRatioLocked) {
+                                                selectedAspectRatio = "Freeform"
+                                            }
+                                        }
+                                    }
+                                )
                             }
                         }
                     }
-                }
 
-                Spacer(modifier = Modifier.height(120.dp))
-            }
-        }
+                    Spacer(modifier = Modifier.height(24.dp))
 
-        // Interactive Crop Overlay
-        AnimatedVisibility(
-            visible = showCropOverlay,
-            enter = fadeIn(),
-            exit = fadeOut()
-        ) {
-            if (imageUri != null) {
-                CropEditorOverlay(
-                    imageUri = imageUri!!,
-                    onDismiss = { showCropOverlay = false },
-                    onCropApplied = { newUri, newSizeMb, newW, newH ->
-                        imageUri = newUri
-                        imageSizeMb = newSizeMb
-                        imageWidth = newW
-                        imageHeight = newH
-                        showCropOverlay = false
-                        imageName = "Cropped_${imageName}"
-                    }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun CropEditorOverlay(
-    imageUri: Uri,
-    onDismiss: () -> Unit,
-    onCropApplied: (Uri, Float, Int, Int) -> Unit
-) {
-    val context = LocalContext.current
-    val haptics = LocalHapticFeedback.current
-    val coroutineScope = rememberCoroutineScope()
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
-    var isCropping by remember { mutableStateOf(false) }
-
-    var targetAspectRatio by remember { mutableFloatStateOf(1f) }
-    var rotationDegrees by remember { mutableFloatStateOf(0f) }
-    var viewportWidthPx by remember { mutableFloatStateOf(1f) }
-    var viewportHeightPx by remember { mutableFloatStateOf(1f) }
-
-    fun resetViewport() {
-        scale = 1f
-        offsetX = 0f
-        offsetY = 0f
-    }
-
-    fun applyCropMatrix() {
-        isCropping = true
-        coroutineScope.launch(Dispatchers.IO) {
-            try {
-                val outputBase = 1080f
-                val outW = if (targetAspectRatio >= 1f) outputBase else outputBase * targetAspectRatio
-                val outH = if (targetAspectRatio <= 1f) outputBase else outputBase / targetAspectRatio
-
-                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                context.contentResolver.openInputStream(imageUri)?.use { BitmapFactory.decodeStream(it, null, options) }
-
-                var sampleSize = 1
-                while (options.outWidth / sampleSize > 3000 || options.outHeight / sampleSize > 3000) { sampleSize *= 2 }
-                options.inJustDecodeBounds = false
-                options.inSampleSize = sampleSize
-
-                val original = context.contentResolver.openInputStream(imageUri)?.use {
-                    BitmapFactory.decodeStream(it, null, options)
-                } ?: throw Exception("Failed to load bitmap")
-
-                var activeBitmap = original
-                if (rotationDegrees % 360f != 0f) {
-                    val rotMatrix = Matrix().apply { postRotate(rotationDegrees) }
-                    activeBitmap = Bitmap.createBitmap(original, 0, 0, original.width, original.height, rotMatrix, true)
-                    if (activeBitmap != original) original.recycle()
-                }
-
-                val resultBitmap = Bitmap.createBitmap(outW.toInt(), outH.toInt(), Bitmap.Config.ARGB_8888)
-                val canvas = Canvas(resultBitmap)
-                val matrix = Matrix()
-
-                val scaleToFill = maxOf(outW / activeBitmap.width, outH / activeBitmap.height)
-                matrix.postTranslate((outW - activeBitmap.width) / 2f, (outH - activeBitmap.height) / 2f)
-                matrix.postScale(scaleToFill, scaleToFill, outW / 2f, outH / 2f)
-
-                val transformScaleMultiplierX = outW / viewportWidthPx
-                val transformScaleMultiplierY = outH / viewportHeightPx
-
-                matrix.postScale(scale, scale, outW / 2f, outH / 2f)
-                matrix.postTranslate(offsetX * transformScaleMultiplierX, offsetY * transformScaleMultiplierY)
-
-                canvas.drawBitmap(activeBitmap, matrix, Paint(Paint.FILTER_BITMAP_FLAG))
-
-                val cacheFile = File(context.cacheDir, "crop_${System.currentTimeMillis()}.jpg")
-                FileOutputStream(cacheFile).use { out ->
-                    resultBitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
-                }
-
-                activeBitmap.recycle()
-                resultBitmap.recycle()
-
-                val newUri = Uri.fromFile(cacheFile)
-                val newSizeMb = cacheFile.length() / (1024f * 1024f)
-
-                withContext(Dispatchers.Main) {
-                    onCropApplied(newUri, newSizeMb, outW.toInt(), outH.toInt())
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                withContext(Dispatchers.Main) { isCropping = false }
-            }
-        }
-    }
-
-    Column(
-        modifier = Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { }
-    ) {
-        Row(modifier = Modifier.fillMaxWidth().padding(16.dp).statusBarsPadding(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Cancel", tint = Color.White) }
-            Text("Crop Photo", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            IconButton(onClick = { applyCropMatrix() }, enabled = !isCropping) {
-                Icon(Icons.Outlined.Check, contentDescription = "Save", tint = PrimaryContainer)
-            }
-        }
-
-        Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(targetAspectRatio)
-                    .clip(RoundedCornerShape(4.dp))
-                    .pointerInput(targetAspectRatio, rotationDegrees) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            if (isCropping) return@detectTransformGestures
-                            scale = (scale * zoom).coerceIn(1f, 5f)
-                            val maxOffsetX = (viewportWidthPx * scale - viewportWidthPx) / 2f
-                            val maxOffsetY = (viewportHeightPx * scale - viewportHeightPx) / 2f
-                            offsetX = (offsetX + pan.x).coerceIn(-maxOffsetX, maxOffsetX)
-                            offsetY = (offsetY + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
-                        }
-                    }
-            ) {
-                viewportWidthPx = constraints.maxWidth.toFloat()
-                viewportHeightPx = constraints.maxHeight.toFloat()
-
-                AsyncImage(
-                    model = imageUri,
-                    contentDescription = "Viewport",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer(
-                            rotationZ = rotationDegrees,
-                            scaleX = scale,
-                            scaleY = scale,
-                            translationX = offsetX,
-                            translationY = offsetY
+                    // Output Encoding
+                    Text("Output Encoding", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        EncodingCard(
+                            modifier = Modifier.weight(1f),
+                            title = "Original (JPG)",
+                            subtitle = "Small file size",
+                            isSelected = selectedEncoding == "Original (JPG)",
+                            isEnabled = !isProcessing,
+                            onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedEncoding = "Original (JPG)" }
                         )
-                )
-
-                Box(modifier = Modifier.fillMaxSize().border(1.dp, Color.White.copy(alpha=0.5f), RoundedCornerShape(4.dp))) {
-                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
-                        Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha=0.3f)))
-                        Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha=0.3f)))
+                        EncodingCard(
+                            modifier = Modifier.weight(1f),
+                            title = "Export as PNG",
+                            subtitle = "High fidelity",
+                            isSelected = selectedEncoding == "Export as PNG",
+                            isEnabled = !isProcessing,
+                            onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedEncoding = "Export as PNG" }
+                        )
                     }
-                    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        Box(Modifier.fillMaxHeight().width(1.dp).background(Color.White.copy(alpha=0.3f)))
-                        Box(Modifier.fillMaxHeight().width(1.dp).background(Color.White.copy(alpha=0.3f)))
-                    }
-                }
-            }
-        }
-
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp).navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
-            if (isCropping) {
-                CircularProgressIndicator(color = PrimaryContainer)
-                Spacer(modifier = Modifier.height(16.dp))
-            } else {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        RatioChip("1:1", targetAspectRatio == 1f, !isCropping) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 1f; resetViewport() }
-                        RatioChip("4:3", targetAspectRatio == 4f/3f, !isCropping) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 4f/3f; resetViewport() }
-                        RatioChip("16:9", targetAspectRatio == 16f/9f, !isCropping) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 16f/9f; resetViewport() }
-                        RatioChip("3:4", targetAspectRatio == 3f/4f, !isCropping) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); targetAspectRatio = 3f/4f; resetViewport() }
-                    }
-
+                } else {
+                    // Empty State Pick Button
                     Box(
                         modifier = Modifier
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha=0.15f))
-                            .clickable(enabled = !isCropping) {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                rotationDegrees += 90f
-                                resetViewport()
-                            }
-                            .padding(8.dp),
+                            .fillMaxWidth()
+                            .height(160.dp)
+                            .shadow(1.dp, RoundedCornerShape(12.dp))
+                            .background(SurfaceContainerLowest, RoundedCornerShape(12.dp))
+                            .clickable { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); imagePickerLauncher.launch("image/*") },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Outlined.RotateRight, contentDescription = "Rotate", tint = Color.White, modifier = Modifier.size(16.dp))
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Outlined.AddPhotoAlternate, contentDescription = null, tint = Primary)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Tap to browse gallery", fontSize = 13.sp, color = Outline, fontWeight = FontWeight.Medium)
+                        }
                     }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
-                Text("Pinch to zoom, drag to pan.", color = Color.White.copy(alpha=0.6f), fontSize = 13.sp)
+
+                Spacer(modifier = Modifier.height(160.dp))
             }
         }
     }
 }
 
 @Composable
-private fun RatioChip(label: String, isSelected: Boolean, isEnabled: Boolean, onClick: () -> Unit) {
-    val bg = if (isSelected) PrimaryContainer else Color.White.copy(alpha=0.15f)
-    val textCol = if (isSelected) OnPrimaryContainer else Color.White
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(bg)
+private fun TagChip(icon: ImageVector, label: String, bg: Color, iconTint: Color) {
+    Row(
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(bg).padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(12.dp))
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Primary)
+    }
+}
+
+@Composable
+private fun CornerMarker(modifier: Modifier) {
+    Box(modifier = modifier.size(14.dp).background(Color.White), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(6.dp).background(PrimaryContainer))
+    }
+}
+
+@Composable
+private fun ToolButton(modifier: Modifier, icon: ImageVector, label: String, isEnabled: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(SurfaceContainerLowest)
+            .border(1.dp, SurfaceContainer, RoundedCornerShape(8.dp))
             .clickable(enabled = isEnabled) { onClick() }
             .alpha(if (isEnabled) 1f else 0.5f)
-            .padding(horizontal = 8.dp, vertical = 6.dp)
+            .padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = textCol)
+        Icon(icon, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+    }
+}
+
+@Composable
+private fun RatioChip(modifier: Modifier, label: String, icon: ImageVector?, isSelected: Boolean, isEnabled: Boolean, onClick: () -> Unit) {
+    val bg = if (isSelected) Primary else SurfaceContainerLowest
+    val textCol = if (isSelected) Color.White else OnSurface
+    val borderCol = if (isSelected) Color.Transparent else SurfaceContainer
+
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(bg)
+            .border(1.dp, borderCol, RoundedCornerShape(50))
+            .clickable(enabled = isEnabled) { onClick() }
+            .alpha(if (isEnabled) 1f else 0.5f)
+            .padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = textCol, modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+        }
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textCol)
+    }
+}
+
+@Composable
+private fun DimensionInput(value: String, isEnabled: Boolean, onValueChange: (String) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(SurfaceContainerLow)
+            .alpha(if (isEnabled) 1f else 0.5f)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            enabled = isEnabled,
+            keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+            textStyle = LocalTextStyle.current.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface),
+            cursorBrush = SolidColor(Primary),
+            modifier = Modifier.weight(1f)
+        )
+        Text("px", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = OnSurfaceVariant)
+    }
+}
+
+@Composable
+private fun EncodingCard(modifier: Modifier, title: String, subtitle: String, isSelected: Boolean, isEnabled: Boolean, onClick: () -> Unit) {
+    val bg = if (isSelected) SurfaceContainer else SurfaceContainerLowest
+    val borderCol = if (isSelected) Color.Transparent else SurfaceContainer
+
+    Row(
+        modifier = modifier
+            .shadow(if (isSelected) 0.dp else 1.dp, RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .border(1.dp, borderCol, RoundedCornerShape(12.dp))
+            .clickable(enabled = isEnabled) { onClick() }
+            .alpha(if (isEnabled) 1f else 0.5f)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(Color.White).border(if(isSelected) 5.dp else 1.dp, if(isSelected) Primary else OutlineVariant, CircleShape))
+        Spacer(modifier = Modifier.width(10.dp))
+        Column {
+            Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+            Text(subtitle, fontSize = 10.sp, color = OnSurfaceVariant)
+        }
     }
 }
 
@@ -609,7 +702,7 @@ private fun CropImageTopBar(onNavigateBack: () -> Unit) {
             Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
         Spacer(modifier = Modifier.width(4.dp))
-        Text("Crop Image", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
+        Text("Crop Image", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = OnSurface, letterSpacing = (-0.01).sp)
     }
 }
 
@@ -618,6 +711,8 @@ private fun CropImageBottomBar(
     isProcessing: Boolean,
     isComplete: Boolean,
     isEnabled: Boolean,
+    originalDimensions: String,
+    croppedDimensions: String,
     onConvert: () -> Unit,
     onShare: () -> Unit,
     onOpen: () -> Unit,
@@ -648,10 +743,18 @@ private fun CropImageBottomBar(
                     }
                 } else {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Row(modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("Original: $originalDimensions", fontSize = 10.sp, color = OnSurfaceVariant)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.ArrowForward, contentDescription = null, tint = Primary, modifier = Modifier.size(10.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Cropped: $croppedDimensions", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Primary)
+                            }
+                        }
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth(0.9f)
-                                .height(48.dp)
+                                .fillMaxWidth()
+                                .height(52.dp)
                                 .shadow(if (isEnabled && !isProcessing) 4.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.5f))
                                 .clip(RoundedCornerShape(cornerRadius))
                                 .background(buttonColor)
@@ -663,20 +766,14 @@ private fun CropImageBottomBar(
                                     if (processing) {
                                         CircularProgressIndicator(color = contentColor, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text("Saving Output...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                                        Text("Applying Matrix...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                                     } else {
-                                        Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
+                                        Icon(Icons.Outlined.Crop, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text("Save Image", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                                        Text("Apply Crop & Save", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = contentColor)
                                     }
                                 }
                             }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Outlined.VerifiedUser, contentDescription = null, tint = OnSurfaceVariant, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("No uploads. Processed strictly in browser memory.", fontSize = 10.sp, color = OnSurfaceVariant)
                         }
                     }
                 }
