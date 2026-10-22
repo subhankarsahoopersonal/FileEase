@@ -18,6 +18,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -87,8 +88,12 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
-    // Source Data State
-    var imageUri by remember { mutableStateOf<Uri?>(null) }
+    // PHASE 3: Batch Selection State
+    var imageUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var activeIndex by remember { mutableIntStateOf(0) }
+    val activeUri = imageUris.getOrNull(activeIndex)
+
+    // Source Metadata State
     var imageName by remember { mutableStateOf("Rotate_Preview.jpg") }
     var imageWidth by remember { mutableIntStateOf(4032) }
     var imageHeight by remember { mutableIntStateOf(3024) }
@@ -104,17 +109,17 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
 
     // Execution State
     var isProcessing by remember { mutableStateOf(false) }
+    var processedCount by remember { mutableIntStateOf(0) }
 
     val totalRotation = baseRotation + fineAngle
 
-    val imagePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
-        if (uri != null) {
-            coroutineScope.launch(Dispatchers.IO) {
+    // Metadata Loader Effect
+    LaunchedEffect(activeUri) {
+        if (activeUri != null) {
+            withContext(Dispatchers.IO) {
                 var name = "Image.jpg"
                 var sizeBytes = 0L
-                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                context.contentResolver.query(activeUri, null, null, null, null)?.use { cursor ->
                     val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                     val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
                     if (cursor.moveToFirst()) {
@@ -123,10 +128,9 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                     }
                 }
                 val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+                context.contentResolver.openInputStream(activeUri)?.use { BitmapFactory.decodeStream(it, null, options) }
 
                 withContext(Dispatchers.Main) {
-                    imageUri = uri
                     imageName = name
                     imageWidth = options.outWidth
                     imageHeight = options.outHeight
@@ -136,10 +140,30 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                     fineAngle = 0f
                     scaleX = 1f
                     scaleY = 1f
-                    isProcessing = false
                 }
             }
         }
+    }
+
+    // Launchers
+    val singlePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            imageUris = listOf(uri)
+            activeIndex = 0
+            isBatchMode = false
+        }
+    }
+
+    val multiPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        if (uris.isNotEmpty()) {
+            imageUris = uris
+            activeIndex = 0
+            isBatchMode = true
+        }
+    }
+
+    val launchPicker = {
+        if (isBatchMode) multiPickerLauncher.launch("image/*") else singlePickerLauncher.launch("image/*")
     }
 
     Scaffold(
@@ -151,84 +175,91 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                 scaleX = scaleX,
                 scaleY = scaleY,
                 isBatchMode = isBatchMode,
+                batchCount = imageUris.size,
                 isProcessing = isProcessing,
+                processedCount = processedCount,
                 onSaveClick = {
-                    if (imageUri == null || isProcessing) return@RotateBottomBar
+                    if (imageUris.isEmpty() || isProcessing) return@RotateBottomBar
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
 
-                    // PHASE 2: OOM-Safe Matrix Export Pipeline
+                    // PHASE 3: Batch IO Export Pipeline
                     coroutineScope.launch(Dispatchers.IO) {
                         isProcessing = true
-                        try {
-                            val originalName = imageName.substringBeforeLast(".")
-                            val finalName = "${originalName}_rotated.jpg"
+                        processedCount = 0
 
-                            // 1. Calculate Safe Memory Bounds (Max 2500px dimension)
-                            val MAX_DIMENSION = 2500f
-                            val decodeOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                            context.contentResolver.openInputStream(imageUri!!)?.use {
-                                BitmapFactory.decodeStream(it, null, decodeOptions)
-                            }
+                        val urisToProcess = if (isBatchMode) imageUris else listOfNotNull(activeUri)
+                        val safeRot = if (totalRotation.isNaN()) 0f else totalRotation
 
-                            var sampleSize = 1
-                            while (decodeOptions.outWidth / sampleSize > MAX_DIMENSION || decodeOptions.outHeight / sampleSize > MAX_DIMENSION) {
-                                sampleSize *= 2
-                            }
-
-                            // 2. Decode Safely
-                            val loadOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-                            val original = context.contentResolver.openInputStream(imageUri!!)?.use {
-                                BitmapFactory.decodeStream(it, null, loadOptions)
-                            } ?: throw Exception("Failed to load image")
-
-                            // 3. Apply Hardware Matrix Transforms
-                            val matrix = android.graphics.Matrix().apply {
-                                val safeRot = if (totalRotation.isNaN()) 0f else totalRotation
-                                postRotate(safeRot)
-                                postScale(scaleX, scaleY)
-                            }
-                            val rotatedBitmap = Bitmap.createBitmap(original, 0, 0, original.width, original.height, matrix, true)
-                            if (rotatedBitmap != original) original.recycle()
-
-                            // 4. Scoped Storage MediaStore Export
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                                val details = ContentValues().apply {
-                                    put(MediaStore.Images.Media.DISPLAY_NAME, finalName)
-                                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FileEase")
-                                }
-                                val destUri = context.contentResolver.insert(collection, details)
-                                destUri?.let { uri ->
-                                    context.contentResolver.openOutputStream(uri)?.use { out ->
-                                        rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                        for (uri in urisToProcess) {
+                            try {
+                                var originalName = "Image"
+                                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                                    val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                    if (cursor.moveToFirst() && nameIdx != -1) {
+                                        originalName = cursor.getString(nameIdx)?.substringBeforeLast(".") ?: "Image"
                                     }
                                 }
-                            } else {
-                                @Suppress("DEPRECATION")
-                                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "FileEase")
-                                if (!dir.exists()) dir.mkdirs()
-                                val file = File(dir, finalName)
-                                FileOutputStream(file).use { out ->
-                                    rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-                                }
-                                MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("image/jpeg"), null)
-                            }
-                            rotatedBitmap.recycle()
+                                val finalName = "${originalName}_rotated.jpg"
 
-                            // 5. Success Feedback
-                            withContext(Dispatchers.Main) {
-                                isProcessing = false
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+                                val MAX_DIMENSION = 2500f
+                                val decodeOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, decodeOptions) }
+
+                                var sampleSize = 1
+                                while (decodeOptions.outWidth / sampleSize > MAX_DIMENSION || decodeOptions.outHeight / sampleSize > MAX_DIMENSION) {
+                                    sampleSize *= 2
+                                }
+
+                                val loadOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                                val original = context.contentResolver.openInputStream(uri)?.use {
+                                    BitmapFactory.decodeStream(it, null, loadOptions)
+                                } ?: continue
+
+                                val matrix = android.graphics.Matrix().apply {
+                                    postRotate(safeRot)
+                                    postScale(scaleX, scaleY)
+                                }
+                                val rotatedBitmap = Bitmap.createBitmap(original, 0, 0, original.width, original.height, matrix, true)
+                                if (rotatedBitmap != original) original.recycle()
+
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                    val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                                    val details = ContentValues().apply {
+                                        put(MediaStore.Images.Media.DISPLAY_NAME, finalName)
+                                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                                        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FileEase")
+                                    }
+                                    val destUri = context.contentResolver.insert(collection, details)
+                                    destUri?.let { dest ->
+                                        context.contentResolver.openOutputStream(dest)?.use { out ->
+                                            rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                                        }
+                                    }
                                 } else {
                                     @Suppress("DEPRECATION")
-                                    vibrator?.vibrate(100)
+                                    val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "FileEase")
+                                    if (!dir.exists()) dir.mkdirs()
+                                    val file = File(dir, finalName)
+                                    FileOutputStream(file).use { out ->
+                                        rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                                    }
+                                    MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("image/jpeg"), null)
                                 }
+                                rotatedBitmap.recycle()
+
+                                withContext(Dispatchers.Main) { processedCount++ }
+
+                            } catch (e: Exception) { e.printStackTrace() }
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            isProcessing = false
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+                            } else {
+                                @Suppress("DEPRECATION")
+                                vibrator?.vibrate(100)
                             }
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                            withContext(Dispatchers.Main) { isProcessing = false }
                         }
                     }
                 }
@@ -259,13 +290,13 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                         label = "Single Image",
                         icon = Icons.Outlined.Image,
                         isSelected = !isBatchMode,
-                        onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); isBatchMode = false }
+                        onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); isBatchMode = false; if(imageUris.isEmpty()) launchPicker() }
                     )
                     ModeButton(
-                        label = "Batch Folder (12)",
+                        label = "Batch Folder",
                         icon = Icons.Outlined.Folder,
                         isSelected = isBatchMode,
-                        onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); isBatchMode = true }
+                        onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); isBatchMode = true; if(imageUris.isEmpty()) launchPicker() }
                     )
                 }
                 Row(
@@ -354,12 +385,12 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(16.dp)
-                            .clickable(enabled = !isProcessing) { imagePickerLauncher.launch("image/*") },
+                            .clickable(enabled = !isProcessing) { launchPicker() },
                         contentAlignment = Alignment.Center
                     ) {
-                        if (imageUri != null) {
+                        if (activeUri != null) {
                             AsyncImage(
-                                model = imageUri,
+                                model = activeUri,
                                 contentDescription = "Viewport",
                                 contentScale = ContentScale.Fit,
                                 modifier = Modifier
@@ -395,27 +426,45 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                     }
                 }
 
+                // PHASE 3: Interactive Batch Reel
                 AnimatedVisibility(visible = isBatchMode) {
                     Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
                         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text("Batch Targets (12 files)", fontSize = 10.sp, color = RotOnSurfaceVariant, fontWeight = FontWeight.Medium)
-                            Text("Select All", fontSize = 10.sp, color = RotPrimary, fontWeight = FontWeight.SemiBold)
+                            Text("Batch Targets (${imageUris.size} files)", fontSize = 10.sp, color = RotOnSurfaceVariant, fontWeight = FontWeight.Medium)
+                            Text("Select More", fontSize = 10.sp, color = RotPrimary, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { launchPicker() })
                         }
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).border(2.dp, RotPrimaryContainer, RoundedCornerShape(8.dp)).background(RotSurfaceContainer)) {
-                                AsyncImage(model = imageUri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                                Box(modifier = Modifier.align(Alignment.TopEnd).padding(2.dp).size(12.dp).clip(CircleShape).background(RotPrimary), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Outlined.Check, contentDescription = null, tint = RotOnPrimary, modifier = Modifier.size(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (imageUris.isEmpty()) {
+                                Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(RotSurfaceContainerHigh).clickable { launchPicker() }, contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Outlined.Add, contentDescription = null, tint = RotOutline, modifier = Modifier.size(16.dp))
                                 }
-                            }
-                            Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(RotSurfaceContainer).alpha(0.85f)) {
-                                AsyncImage(model = imageUri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                            }
-                            Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(RotSurfaceContainer).alpha(0.85f)) {
-                                AsyncImage(model = imageUri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                            }
-                            Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(RotSurfaceContainerHigh), contentAlignment = Alignment.Center) {
-                                Text("+9", fontSize = 10.sp, color = RotOnSurfaceVariant)
+                            } else {
+                                imageUris.take(6).forEachIndexed { index, uri ->
+                                    val isSelected = index == activeIndex
+                                    Box(
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .then(if(isSelected) Modifier.border(2.dp, RotPrimaryContainer, RoundedCornerShape(8.dp)) else Modifier)
+                                            .background(RotSurfaceContainer)
+                                            .clickable { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); activeIndex = index }
+                                    ) {
+                                        AsyncImage(model = uri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().alpha(if(isSelected) 1f else 0.7f))
+                                        if (isSelected) {
+                                            Box(modifier = Modifier.align(Alignment.TopEnd).padding(2.dp).size(12.dp).clip(CircleShape).background(RotPrimary), contentAlignment = Alignment.Center) {
+                                                Icon(Icons.Outlined.Check, contentDescription = null, tint = RotOnPrimary, modifier = Modifier.size(8.dp))
+                                            }
+                                        }
+                                    }
+                                }
+                                if (imageUris.size > 6) {
+                                    Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(RotSurfaceContainerHigh).clickable { launchPicker() }, contentAlignment = Alignment.Center) {
+                                        Text("+${imageUris.size - 6}", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = RotOnSurfaceVariant)
+                                    }
+                                }
                             }
                         }
                     }
@@ -492,6 +541,11 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                             value = fineAngle,
                             onValueChange = { if(!isProcessing) fineAngle = it },
                             valueRange = -45f..45f,
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color.Transparent,
+                                activeTrackColor = Color.Transparent,
+                                inactiveTrackColor = Color.Transparent
+                            ),
                             modifier = Modifier.fillMaxSize().alpha(0.01f)
                         )
                     }
@@ -521,10 +575,10 @@ fun RotateImageScreen(onNavigateBack: () -> Unit) {
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
-                        Text(if(imageUri != null) imageName else "No Image Selected", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = RotOnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.6f))
+                        Text(if(activeUri != null) imageName else "No Image Selected", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = RotOnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.6f))
                         val safeSize = if (imageSizeMb.isNaN()) 0f else imageSizeMb
                         val displayMb = ((safeSize * 10f).roundToInt() / 10f).toString()
-                        if(imageUri != null) {
+                        if(activeUri != null) {
                             Text("${imageWidth} × ${imageHeight} · ${displayMb} MB", fontSize = 10.sp, color = RotOnSurfaceVariant)
                         } else {
                             Text("Waiting for input", fontSize = 10.sp, color = RotOnSurfaceVariant)
@@ -617,7 +671,9 @@ private fun RotateBottomBar(
     scaleX: Float,
     scaleY: Float,
     isBatchMode: Boolean,
+    batchCount: Int,
     isProcessing: Boolean,
+    processedCount: Int,
     onSaveClick: () -> Unit
 ) {
     Column(
@@ -660,13 +716,15 @@ private fun RotateBottomBar(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(color = RotOnPrimaryContainer, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Processing...", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RotOnPrimaryContainer)
+                            val progressText = if (isBatchMode) "Processing ${processedCount + 1}/$batchCount..." else "Processing..."
+                            Text(progressText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RotOnPrimaryContainer)
                         }
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = RotOnPrimaryContainer, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(if (isBatchMode) "Apply to 12 Photos & Save" else "Apply Rotation & Save", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RotOnPrimaryContainer)
+                            val btnText = if (isBatchMode && batchCount > 0) "Apply to $batchCount Photos & Save" else "Apply Rotation & Save"
+                            Text(btnText, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RotOnPrimaryContainer)
                         }
                     }
                 }
