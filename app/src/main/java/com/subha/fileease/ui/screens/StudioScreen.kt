@@ -35,8 +35,9 @@ fun StudioScreen(
     onJpgToPngClick: () -> Unit = {},
     onTextToPdfClick: () -> Unit = {},
     onCropImageClick: () -> Unit = {},
-    onResizeImageClick: () -> Unit = {}, // <-- ADDED RESIZE TRIGGER
-    onCompressImageClick: () -> Unit = {}
+    onResizeImageClick: () -> Unit = {},
+    onCompressImageClick: () -> Unit = {},
+    onRotateImageClick: () -> Unit = {} // <-- ADDED ROTATE TRIGGER
 ) {
     Scaffold(
         containerColor = Surface,
@@ -116,7 +117,7 @@ fun StudioScreen(
                     modifier = Modifier.weight(1f),
                     title = "Resize Image",
                     icon = Icons.Outlined.OpenInFull,
-                    onClick = onResizeImageClick // <-- CONNECTED TO CARD
+                    onClick = onResizeImageClick
                 )
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -131,7 +132,7 @@ fun StudioScreen(
                     modifier = Modifier.weight(1f),
                     title = "Rotate Image",
                     icon = Icons.Outlined.RotateRight,
-                    onClick = { /* Not yet implemented */ }
+                    onClick = onRotateImageClick // <-- CONNECTED TO CARD
                 )
             }
 

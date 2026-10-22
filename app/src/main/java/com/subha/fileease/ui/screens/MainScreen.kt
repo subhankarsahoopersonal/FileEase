@@ -162,8 +162,9 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
                     onJpgToPngClick = { navController.navigate("jpg_to_png") },
                     onTextToPdfClick = { navController.navigate("text_to_pdf") },
                     onCropImageClick = { navController.navigate("crop_image") },
-                    onResizeImageClick = { navController.navigate("resize_image") }, // <-- INJECTED RESIZE NAV
-                    onCompressImageClick = { navController.navigate("image_compress") }
+                    onResizeImageClick = { navController.navigate("resize_image") },
+                    onCompressImageClick = { navController.navigate("image_compress") },
+                    onRotateImageClick = { navController.navigate("rotate_image") } // <-- INJECTED ROTATE NAV
                 )
             }
         }
@@ -204,9 +205,12 @@ fun NavigationGraph(navController: NavHostController, topLevelRoutes: Set<String
         composable("image_compress") {
             CompressImageScreen(onNavigateBack = { navController.popBackStack() })
         }
-        // <-- NEW RESIZE IMAGE ROUTE ADDED HERE
         composable("resize_image") {
             ResizeImageScreen(onNavigateBack = { navController.popBackStack() })
+        }
+        // <-- NEW ROTATE IMAGE ROUTE ADDED HERE
+        composable("rotate_image") {
+            RotateImageScreen(onNavigateBack = { navController.popBackStack() })
         }
     }
 }
