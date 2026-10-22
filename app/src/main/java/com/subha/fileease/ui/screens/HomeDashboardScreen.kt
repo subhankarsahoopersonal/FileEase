@@ -12,9 +12,13 @@ import android.provider.MediaStore
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -28,13 +32,17 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,7 +50,8 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-val BgColor = Color(0xFFF8FAFC)
+// App-Wide Color Tokens
+val BgColor = Color(0xFFFAF8FF)
 val SurfaceColor = Color(0xFFFFFFFF)
 val PrimaryBlue = Color(0xFF0066FF)
 val TextPrimary = Color(0xFF0F172A)
@@ -62,6 +71,33 @@ data class RecentActivityData(
     val size: String,
     val iconType: ActivityIconType
 )
+
+// Premium SaaS Bounce Animation Modifier
+fun Modifier.bounceClick(onClick: () -> Unit): Modifier = composed {
+    var isPressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.95f else 1f,
+        animationSpec = spring(stiffness = 500f, dampingRatio = 0.6f),
+        label = "bounce"
+    )
+
+    this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .pointerInput(Unit) {
+            while (true) {
+                awaitPointerEventScope {
+                    awaitFirstDown(requireUnconsumed = false)
+                    isPressed = true
+                    waitForUpOrCancellation()
+                    isPressed = false
+                }
+            }
+        }
+        .clickable { onClick() }
+}
 
 @Composable
 fun HomeDashboardScreen(
@@ -126,10 +162,10 @@ fun HomeDashboardScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
         ) {
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             GreetingSection()
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(28.dp))
             QuickActionsSection(
                 onMergeClick = onMergeClick,
                 onSplitClick = onSplitClick,
@@ -138,10 +174,10 @@ fun HomeDashboardScreen(
                 onViewAllClick = onViewAllClick
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(28.dp))
             DeviceStorageSection(hasStoragePermission, requestPermission)
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(28.dp))
             RecentActivitySection(hasStoragePermission)
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -154,75 +190,32 @@ fun DashboardTopBar() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceColor.copy(alpha = 0.9f))
+            .background(BgColor.copy(alpha = 0.95f))
             .padding(horizontal = 20.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(PrimaryBlue),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Description,
-                    contentDescription = "Logo",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
-                text = "FileEase",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = TextPrimary
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(PrimaryBlue),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Description,
+                contentDescription = "Logo",
+                tint = Color.White,
+                modifier = Modifier.size(20.dp)
             )
         }
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .clickable { },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Notifications,
-                    contentDescription = "Notifications",
-                    tint = TextSecondary,
-                    modifier = Modifier.size(24.dp)
-                )
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 6.dp, end = 6.dp)
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(Red500)
-                        .border(2.dp, SurfaceColor, CircleShape)
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(Slate100)
-                    .border(2.dp, SurfaceColor, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Person,
-                    contentDescription = "User Avatar",
-                    tint = TextSecondary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = "FileEase",
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            color = TextPrimary,
+            fontFamily = LocalTextStyle.current.fontFamily
+        )
     }
 }
 
@@ -231,17 +224,19 @@ fun GreetingSection() {
     Column {
         Text(
             text = "Good morning,\nSubha",
-            fontSize = 24.sp,
+            fontSize = 28.sp,
             fontWeight = FontWeight.ExtraBold,
             color = TextPrimary,
-            lineHeight = 28.sp
+            lineHeight = 34.sp,
+            fontFamily = LocalTextStyle.current.fontFamily
         )
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = "What would you like to do today?",
-            fontSize = 14.sp,
+            fontSize = 16.sp,
             fontWeight = FontWeight.Medium,
-            color = TextSecondary
+            color = TextSecondary,
+            fontFamily = LocalTextStyle.current.fontFamily
         )
     }
 }
@@ -262,22 +257,24 @@ fun QuickActionsSection(
         ) {
             Text(
                 text = "Quick Actions",
-                fontSize = 16.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
-                color = TextPrimary
+                color = TextPrimary,
+                fontFamily = LocalTextStyle.current.fontFamily
             )
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .clickable { onViewAllClick() }
+                    .clip(RoundedCornerShape(6.dp))
+                    .bounceClick { onViewAllClick() }
                     .padding(4.dp)
             ) {
                 Text(
                     text = "View all",
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = PrimaryBlue
+                    color = PrimaryBlue,
+                    fontFamily = LocalTextStyle.current.fontFamily
                 )
                 Icon(
                     imageVector = Icons.Outlined.ChevronRight,
@@ -288,7 +285,7 @@ fun QuickActionsSection(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         Row(
             modifier = Modifier
@@ -298,24 +295,32 @@ fun QuickActionsSection(
         ) {
             Column(
                 modifier = Modifier
-                    .width(84.dp)
-                    .height(92.dp)
-                    .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = PrimaryBlue)
-                    .clip(RoundedCornerShape(16.dp))
+                    .width(96.dp)
+                    .height(108.dp)
+                    .shadow(8.dp, RoundedCornerShape(20.dp), spotColor = PrimaryBlue.copy(alpha = 0.4f))
+                    .clip(RoundedCornerShape(20.dp))
                     .background(PrimaryBlue)
-                    .clickable { onImagesToPdfClick() }
-                    .padding(10.dp),
+                    .bounceClick { onImagesToPdfClick() }
+                    .padding(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
                 Box(
-                    modifier = Modifier.size(36.dp),
+                    modifier = Modifier.size(40.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Outlined.Image, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+                    Icon(Icons.Outlined.Image, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))
                 }
-                Spacer(modifier = Modifier.height(6.dp))
-                Text("Images to PDF", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Images to\nPDF",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 16.sp,
+                    fontFamily = LocalTextStyle.current.fontFamily
+                )
             }
 
             QuickActionCard(icon = Icons.Outlined.Layers, title = "Merge PDF", onClick = onMergeClick)
@@ -329,27 +334,35 @@ fun QuickActionsSection(
 fun QuickActionCard(icon: ImageVector, title: String, onClick: () -> Unit) {
     Column(
         modifier = Modifier
-            .width(84.dp)
-            .height(92.dp)
-            .border(1.dp, Slate100, RoundedCornerShape(16.dp))
-            .clip(RoundedCornerShape(16.dp))
+            .width(96.dp)
+            .height(108.dp)
+            .border(1.dp, Slate100, RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(SurfaceColor)
-            .clickable { onClick() }
-            .padding(10.dp),
+            .bounceClick { onClick() }
+            .padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Box(
             modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .size(40.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(Blue50),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(22.dp))
+            Icon(icon, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(24.dp))
         }
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(title, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1E293B), maxLines = 1)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = title,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = TextPrimary,
+            textAlign = TextAlign.Center,
+            lineHeight = 16.sp,
+            fontFamily = LocalTextStyle.current.fontFamily
+        )
     }
 }
 
@@ -357,7 +370,6 @@ fun QuickActionCard(icon: ImageVector, title: String, onClick: () -> Unit) {
 fun DeviceStorageSection(hasStoragePermission: Boolean, onRequestPermission: () -> Unit) {
     val context = LocalContext.current
 
-    // PERFORMANCE FIX: Cache calculation across tab navigation using rememberSaveable
     var totalGb by rememberSaveable { mutableStateOf(128f) }
     var usedGb by rememberSaveable { mutableStateOf(0f) }
     var docsGb by rememberSaveable { mutableStateOf(0f) }
@@ -366,7 +378,6 @@ fun DeviceStorageSection(hasStoragePermission: Boolean, onRequestPermission: () 
     var isDataLoaded by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(hasStoragePermission) {
-        // Only run the heavy I/O if the data hasn't been loaded yet to prevent navigation lag
         if (!isDataLoaded) {
             withContext(Dispatchers.IO) {
                 try {
@@ -402,10 +413,11 @@ fun DeviceStorageSection(hasStoragePermission: Boolean, onRequestPermission: () 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(Brush.linearGradient(listOf(Color(0xFF1E60F2), Color(0xFF3B82F6), Color(0xFF60A5FA))))
-            .clickable(enabled = !hasStoragePermission) { onRequestPermission() }
-            .padding(20.dp)
+            .clip(RoundedCornerShape(20.dp))
+            // Richer, deeper blue gradient matching the mockup
+            .background(Brush.linearGradient(listOf(Color(0xFF3B82F6), Color(0xFF2563EB), Color(0xFF1D4ED8))))
+            .bounceClick { if (!hasStoragePermission) onRequestPermission() }
+            .padding(24.dp)
     ) {
         Column {
             Row(
@@ -414,33 +426,32 @@ fun DeviceStorageSection(hasStoragePermission: Boolean, onRequestPermission: () 
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Memory, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
+                    Icon(Icons.Outlined.Memory, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Device Storage", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
+                    Text("Device Storage", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f), fontFamily = LocalTextStyle.current.fontFamily)
                 }
 
                 if (!hasStoragePermission) {
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
+                            .clip(RoundedCornerShape(6.dp))
                             .background(Color.White.copy(alpha = 0.2f))
-                            .clickable { onRequestPermission() }
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Text("Tap to sync", fontSize = 10.sp, color = Color.White)
+                        Text("Tap to sync", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White, fontFamily = LocalTextStyle.current.fontFamily)
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             Row(verticalAlignment = Alignment.Bottom) {
-                Text("${"%.1f".format(usedGb)} GB", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("of ${"%.0f".format(totalGb)} GB used", fontSize = 14.sp, fontWeight = FontWeight.Normal, color = Color.White.copy(alpha = 0.8f))
+                Text("${"%.1f".format(usedGb)} GB", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, fontFamily = LocalTextStyle.current.fontFamily)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("of ${"%.0f".format(totalGb)} GB used", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.8f), fontFamily = LocalTextStyle.current.fontFamily, modifier = Modifier.padding(bottom = 4.dp))
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
             Box(
                 modifier = Modifier
@@ -458,19 +469,19 @@ fun DeviceStorageSection(hasStoragePermission: Boolean, onRequestPermission: () 
                 )
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White))
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color.White))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(if (hasStoragePermission) "Documents ${"%.2f".format(docsGb)} GB" else "Docs Hidden", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
+                    Text(if (hasStoragePermission) "Documents ${"%.0f".format(docsGb)} GB" else "Docs Hidden", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f), fontFamily = LocalTextStyle.current.fontFamily)
                 }
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(20.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.5f)))
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.5f)))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Others ${"%.1f".format(othersGb)} GB", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
+                    Text("Others ${"%.0f".format(othersGb)} GB", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f), fontFamily = LocalTextStyle.current.fontFamily)
                 }
             }
         }
@@ -500,16 +511,24 @@ fun RecentActivitySection(hasStoragePermission: Boolean) {
         ) {
             Text(
                 text = "Recent Activity",
-                fontSize = 16.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
-                color = TextPrimary
+                color = TextPrimary,
+                fontFamily = LocalTextStyle.current.fontFamily
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .bounceClick { }
+                    .padding(4.dp)
+            ) {
                 Text(
                     text = "View all",
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = PrimaryBlue
+                    color = PrimaryBlue,
+                    fontFamily = LocalTextStyle.current.fontFamily
                 )
                 Icon(
                     imageVector = Icons.Outlined.ChevronRight,
@@ -520,7 +539,7 @@ fun RecentActivitySection(hasStoragePermission: Boolean) {
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (!hasStoragePermission) {
@@ -549,7 +568,7 @@ fun RecentActivitySection(hasStoragePermission: Boolean) {
                     size = "890 KB"
                 )
             } else if (recentFiles.isEmpty() && isFilesLoaded) {
-                Text("No recent files found", color = TextTertiary, fontSize = 13.sp, modifier = Modifier.padding(14.dp))
+                Text("No recent files found", color = TextTertiary, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(14.dp), fontFamily = LocalTextStyle.current.fontFamily)
             } else {
                 recentFiles.forEach { file ->
                     val icon = when (file.iconType) {
@@ -586,11 +605,11 @@ fun ActivityItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, Slate100, RoundedCornerShape(16.dp))
-            .clip(RoundedCornerShape(16.dp))
+            .border(1.dp, Slate100, RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(SurfaceColor)
-            .clickable { }
-            .padding(14.dp),
+            .bounceClick { }
+            .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -600,37 +619,41 @@ fun ActivityItem(
         ) {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(14.dp))
                     .background(iconBgColor),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(22.dp))
+                Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(24.dp))
             }
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(14.dp))
             Column {
                 Text(
                     text = title,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
                     color = TextPrimary,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    fontFamily = LocalTextStyle.current.fontFamily
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
-                    fontSize = 11.sp,
-                    color = TextTertiary
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = TextTertiary,
+                    fontFamily = LocalTextStyle.current.fontFamily
                 )
             }
         }
         Text(
             text = size,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
             color = TextSecondary,
-            modifier = Modifier.padding(start = 8.dp)
+            modifier = Modifier.padding(start = 8.dp),
+            fontFamily = LocalTextStyle.current.fontFamily
         )
     }
 }
