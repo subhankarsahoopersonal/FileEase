@@ -220,13 +220,12 @@ fun DashboardTopBar() {
 
 @Composable
 fun GreetingSection() {
-    // Dynamically calculate the greeting based on the current hour
     val currentHour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
     val greeting = when (currentHour) {
-        in 0..11 -> "Good Morning"
-        in 12..16 -> "Good Afternoon"
-        in 17..20 -> "Good Evening"
-        else -> "Good Night"
+        in 0..11 -> "Good morning"
+        in 12..16 -> "Good afternoon"
+        in 17..20 -> "Good evening"
+        else -> "Good night"
     }
 
     Column {
@@ -499,7 +498,9 @@ fun DeviceStorageSection(hasStoragePermission: Boolean, onRequestPermission: () 
 fun RecentActivitySection(hasStoragePermission: Boolean) {
     val context = LocalContext.current
     var recentFiles by remember { mutableStateOf<List<RecentActivityData>>(emptyList()) }
-    var isFilesLoaded by rememberSaveable { mutableStateOf(false) }
+
+    // FIX: Switched from rememberSaveable to remember so it re-triggers when returning from other tabs
+    var isFilesLoaded by remember { mutableStateOf(false) }
 
     LaunchedEffect(hasStoragePermission) {
         if (hasStoragePermission && !isFilesLoaded) {
