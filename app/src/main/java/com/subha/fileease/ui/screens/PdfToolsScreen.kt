@@ -1,12 +1,10 @@
 package com.subha.fileease.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -56,7 +54,6 @@ fun PdfToolsScreen(
 
     Scaffold(
         containerColor = BgColor,
-        topBar = { PdfToolsTopBar() },
         contentWindowInsets = WindowInsets(0.dp),
         snackbarHost = {
             SnackbarHost(hostState = snackbarHostState) { data ->
@@ -64,7 +61,7 @@ fun PdfToolsScreen(
                     modifier = Modifier
                         .padding(bottom = 80.dp, start = 24.dp, end = 24.dp)
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(16.dp))
                         .background(TextPrimary)
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
@@ -79,8 +76,9 @@ fun PdfToolsScreen(
                         Text(
                             text = data.visuals.message,
                             color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            fontFamily = LocalTextStyle.current.fontFamily
                         )
                     }
                 }
@@ -92,6 +90,7 @@ fun PdfToolsScreen(
                 .fillMaxSize()
                 .background(BgColor)
                 .padding(innerPadding)
+                .statusBarsPadding() // Safely pushes the header below the system icons
         ) {
             Column(
                 modifier = Modifier
@@ -100,16 +99,18 @@ fun PdfToolsScreen(
             ) {
                 Text(
                     text = "PDF Tools",
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = TextPrimary,
+                    fontFamily = LocalTextStyle.current.fontFamily
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "Manipulate documents offline",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Normal,
-                    color = TextSecondary
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = TextSecondary,
+                    fontFamily = LocalTextStyle.current.fontFamily
                 )
             }
 
@@ -120,7 +121,7 @@ fun PdfToolsScreen(
                     .padding(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
-                contentPadding = PaddingValues(top = 12.dp, bottom = 130.dp) // Padded for the floating bar
+                contentPadding = PaddingValues(top = 12.dp, bottom = 130.dp)
             ) {
                 items(tools, key = { it.title }) { tool ->
                     PdfToolCard(
@@ -144,66 +145,28 @@ fun PdfToolsScreen(
 }
 
 @Composable
-private fun PdfToolsTopBar() {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(BgColor.copy(alpha = 0.95f))
-            .statusBarsPadding() // FIX: Pushes the TopBar safely below system icons
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(PrimaryBlue),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Description,
-                    contentDescription = "Logo",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
-                text = "FileEase",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = TextPrimary
-            )
-        }
-    }
-}
-
-@Composable
 fun PdfToolCard(tool: PdfTool, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 148.dp)
+            .heightIn(min = 152.dp)
             .shadow(
-                elevation = 2.dp,
-                shape = RoundedCornerShape(16.dp),
-                ambientColor = Color.Black.copy(alpha = 0.04f),
-                spotColor = Color.Black.copy(alpha = 0.08f)
+                elevation = 6.dp,
+                shape = RoundedCornerShape(20.dp),
+                ambientColor = Color.Black.copy(alpha = 0.03f),
+                spotColor = Color.Black.copy(alpha = 0.06f)
             )
-            .background(SurfaceColor, RoundedCornerShape(16.dp))
-            .border(1.dp, Slate100, RoundedCornerShape(16.dp))
-            .clip(RoundedCornerShape(16.dp))
-            .bounceClick { onClick() } // FIX: Upgraded to physics-driven bounce mechanics
+            .background(SurfaceColor, RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(20.dp))
+            .bounceClick { onClick() }
             .padding(16.dp),
         horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.Top
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .size(42.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(Blue50),
             contentAlignment = Alignment.Center
         ) {
@@ -211,7 +174,7 @@ fun PdfToolCard(tool: PdfTool, onClick: () -> Unit) {
                 imageVector = tool.icon,
                 contentDescription = tool.title,
                 tint = PrimaryBlue,
-                modifier = Modifier.size(22.dp)
+                modifier = Modifier.size(24.dp)
             )
         }
 
@@ -222,17 +185,19 @@ fun PdfToolCard(tool: PdfTool, onClick: () -> Unit) {
             fontSize = 15.sp,
             fontWeight = FontWeight.Bold,
             color = TextPrimary,
-            lineHeight = 18.sp
+            lineHeight = 18.sp,
+            fontFamily = LocalTextStyle.current.fontFamily
         )
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
         Text(
             text = tool.subtitle,
-            fontSize = 11.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Normal,
             color = TextSecondary,
-            lineHeight = 16.sp
+            lineHeight = 16.sp,
+            fontFamily = LocalTextStyle.current.fontFamily
         )
     }
 }
