@@ -354,12 +354,12 @@ fun CompressImageScreen(onNavigateBack: () -> Unit) {
 
                 if (imageUri != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainer)) {
+                        Box(modifier = Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceContainer).shadow(1.dp, RoundedCornerShape(8.dp), clip = false)) {
                             AsyncImage(
                                 model = imageUri,
                                 contentDescription = "Source Image",
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp))
                             )
                             Box(modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp).clip(RoundedCornerShape(4.dp)).background(InverseSurface.copy(alpha = 0.85f)).padding(horizontal = 4.dp, vertical = 2.dp)) {
                                 Text(imageExtension, fontSize = 9.sp, fontWeight = FontWeight.Medium, color = InverseOnSurface)
@@ -685,9 +685,10 @@ private fun CompressTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Surface.copy(alpha = 0.90f))
+            .background(Surface.copy(alpha = 0.95f))
+            .statusBarsPadding()
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .padding(horizontal = 16.dp, vertical = 16.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -696,8 +697,14 @@ private fun CompressTopBar(onNavigateBack: () -> Unit) {
         ) {
             Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
-        Spacer(modifier = Modifier.width(4.dp))
-        Text("Compress Image", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = "Compress Image",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = OnSurface,
+            fontFamily = LocalTextStyle.current.fontFamily
+        )
     }
 }
 
@@ -718,8 +725,8 @@ private fun CompressBottomBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Surface.copy(alpha = 0.90f))
-            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.06f))
+            .background(Surface.copy(alpha = 0.98f))
+            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
             .navigationBarsPadding()
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -738,12 +745,13 @@ private fun CompressBottomBar(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth(0.9f)
+                                .fillMaxWidth()
                                 .height(48.dp)
                                 .shadow(if (isEnabled && !isProcessing) 4.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.5f))
                                 .clip(RoundedCornerShape(cornerRadius))
                                 .background(buttonColor)
-                                .clickable(enabled = isEnabled && !isProcessing) { onConvert() },
+                                .clickable(enabled = isEnabled && !isProcessing) { onConvert() }
+                                .padding(horizontal = 16.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             AnimatedContent(targetState = isProcessing, label = "btnState") { processing ->
