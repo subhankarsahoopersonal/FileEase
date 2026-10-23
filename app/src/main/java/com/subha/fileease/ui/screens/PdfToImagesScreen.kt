@@ -623,9 +623,10 @@ private fun PdfToImagesTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Surface.copy(alpha = 0.90f))
+            .background(Surface.copy(alpha = 0.95f))
+            .statusBarsPadding()
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .padding(horizontal = 16.dp, vertical = 20.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -634,8 +635,14 @@ private fun PdfToImagesTopBar(onNavigateBack: () -> Unit) {
         ) {
             Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
-        Spacer(modifier = Modifier.width(8.dp))
-        Text("PDF To Images", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface, letterSpacing = (-0.01).sp)
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = "PDF To Images",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = OnSurface,
+            fontFamily = LocalTextStyle.current.fontFamily
+        )
     }
 }
 
@@ -655,7 +662,6 @@ private fun SegmentControlRow(options: List<String>, selected: String, onSelect:
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(6.dp))
-                    // Uses Primary solid blue instead of white
                     .background(if (isSelected) Primary else Color.Transparent)
                     .clickable { onSelect(option) }
                     .padding(vertical = 6.dp),
@@ -665,7 +671,6 @@ private fun SegmentControlRow(options: List<String>, selected: String, onSelect:
                     text = option,
                     fontSize = 11.sp,
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                    // Uses OnPrimary (white) text instead of blue text
                     color = if (isSelected) OnPrimary else OnSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
@@ -779,8 +784,8 @@ private fun PdfToImagesBottomBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.95f))
-            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.08f))
+            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
+            .background(Surface.copy(alpha = 0.98f))
             .navigationBarsPadding()
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -791,7 +796,7 @@ private fun PdfToImagesBottomBar(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .height(56.dp)
                     .shadow(if (!isComplete && selectedCount > 0 && !isProcessing) 4.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.5f))
                     .clip(RoundedCornerShape(cornerRadius))
                     .background(if(selectedCount == 0) buttonColor.copy(alpha = 0.5f) else buttonColor)
