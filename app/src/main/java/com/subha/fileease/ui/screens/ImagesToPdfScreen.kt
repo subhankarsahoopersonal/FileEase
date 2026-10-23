@@ -617,9 +617,10 @@ private fun ImagesToPdfTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Surface.copy(alpha = 0.90f))
+            .background(Surface.copy(alpha = 0.95f))
+            .statusBarsPadding()
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .padding(horizontal = 16.dp, vertical = 16.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -628,8 +629,14 @@ private fun ImagesToPdfTopBar(onNavigateBack: () -> Unit) {
         ) {
             Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
-        Spacer(modifier = Modifier.width(4.dp))
-        Text("Images To Pdf", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = "Images to PDF",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = OnSurface,
+            fontFamily = LocalTextStyle.current.fontFamily
+        )
     }
 }
 
@@ -656,8 +663,6 @@ private fun QueueItemRow(
                 translationY = offsetY
                 scaleX = scale
                 scaleY = scale
-                // FIX: Removed the invalid translationZ property completely.
-                // The shadow modifier below natively elevates the item on the Z-axis.
             }
             .fillMaxWidth()
             .shadow(elevation, RoundedCornerShape(12.dp), spotColor = Color.Black.copy(alpha = if (isDragged) 0.1f else 0.04f))
@@ -799,8 +804,8 @@ private fun ImagesToPdfBottomBar(imageCount: Int, totalBytes: Long, isProcessing
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Surface.copy(alpha = 0.95f))
             .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
+            .background(Surface.copy(alpha = 0.98f))
             .navigationBarsPadding()
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
