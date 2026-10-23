@@ -421,7 +421,6 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                             )
                         }
 
-                        // FIXED: Replaced cropped height(16.dp) with standard padding allowing full rendering
                         Box(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).zIndex(1f), contentAlignment = Alignment.Center) {
                             Row(
                                 modifier = Modifier
@@ -498,7 +497,7 @@ fun ResizeImageScreen(onNavigateBack: () -> Unit) {
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             // Resampling Engine
             Column(
@@ -810,9 +809,10 @@ private fun ResizeImageTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Surface.copy(alpha = 0.90f))
+            .background(Surface.copy(alpha = 0.95f))
+            .statusBarsPadding()
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .padding(horizontal = 16.dp, vertical = 16.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -821,8 +821,14 @@ private fun ResizeImageTopBar(onNavigateBack: () -> Unit) {
         ) {
             Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
-        Spacer(modifier = Modifier.width(4.dp))
-        Text("Resize Image", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = OnSurface, letterSpacing = (-0.01).sp)
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = "Resize Image",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = OnSurface,
+            fontFamily = LocalTextStyle.current.fontFamily
+        )
     }
 }
 
@@ -844,8 +850,8 @@ private fun ResizeBottomBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.95f))
-            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.06f))
+            .background(Surface.copy(alpha = 0.98f))
+            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
             .navigationBarsPadding()
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -864,7 +870,7 @@ private fun ResizeBottomBar(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth(0.9f)
+                                .fillMaxWidth()
                                 .height(48.dp)
                                 .shadow(if (isEnabled && !isProcessing) 4.dp else 0.dp, RoundedCornerShape(cornerRadius), spotColor = PrimaryContainer.copy(alpha = 0.5f))
                                 .clip(RoundedCornerShape(cornerRadius))
