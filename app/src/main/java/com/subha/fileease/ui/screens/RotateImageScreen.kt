@@ -652,22 +652,26 @@ private fun RotateImageTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(elevation = 1.dp)
-            .background(RotSurface.copy(alpha = 0.90f))
-            .padding(horizontal = 16.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .background(RotSurface.copy(alpha = 0.95f))
+            .statusBarsPadding()
+            .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(
-                modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = RotOnSurface)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Rotate Image", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RotOnSurface, letterSpacing = (-0.01).sp)
+        Box(
+            modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onNavigateBack() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = RotOnSurface)
         }
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = "Rotate Image",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = RotOnSurface,
+            fontFamily = LocalTextStyle.current.fontFamily
+        )
     }
 }
 
@@ -685,8 +689,8 @@ private fun RotateBottomBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(elevation = 24.dp)
-            .background(RotSurface.copy(alpha = 0.90f))
+            .background(RotSurface.copy(alpha = 0.98f))
+            .shadow(elevation = 24.dp, spotColor = RotOnSurface.copy(alpha = 0.1f))
             .navigationBarsPadding()
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -710,7 +714,7 @@ private fun RotateBottomBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
-                    .shadow(4.dp, RoundedCornerShape(12.dp))
+                    .shadow(if (!isProcessing) 4.dp else 0.dp, RoundedCornerShape(12.dp), spotColor = RotPrimaryContainer.copy(alpha = 0.5f))
                     .clip(RoundedCornerShape(12.dp))
                     .background(if(isProcessing) RotOutline else RotPrimaryContainer)
                     .clickable(enabled = !isProcessing) { onSaveClick() }
