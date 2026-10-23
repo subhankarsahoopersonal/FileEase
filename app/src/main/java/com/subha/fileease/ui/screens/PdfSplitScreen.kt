@@ -359,6 +359,7 @@ private fun SplitTopBar(onNavigateBack: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .background(Surface.copy(alpha = 0.95f))
+            .statusBarsPadding() // FIX: Safely pushes content below the system clock/battery
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -368,7 +369,13 @@ private fun SplitTopBar(onNavigateBack: () -> Unit) {
             contentAlignment = Alignment.Center
         ) { Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface) }
         Spacer(modifier = Modifier.width(12.dp))
-        Text("Split PDF", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+        Text(
+            text = "Split PDF",
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            color = OnSurface,
+            fontFamily = LocalTextStyle.current.fontFamily
+        )
     }
 }
 
