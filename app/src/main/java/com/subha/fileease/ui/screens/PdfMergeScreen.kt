@@ -342,8 +342,8 @@ private fun MergeTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .background(Surface.copy(alpha = 0.95f)) // FIX: Using Surface token for unified color
+            .background(Surface.copy(alpha = 0.95f))
+            .statusBarsPadding() // FIX: Safely pushes content below the system clock/battery
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -359,9 +359,10 @@ private fun MergeTopBar(onNavigateBack: () -> Unit) {
         Spacer(modifier = Modifier.width(12.dp))
         Text(
             text = "Merge PDF",
-            fontSize = 20.sp,
+            fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
-            color = OnSurface
+            color = OnSurface,
+            fontFamily = LocalTextStyle.current.fontFamily
         )
     }
 }
@@ -781,7 +782,6 @@ private fun CustomToggleRow(
     }
 }
 
-// Unified Minimalist Security Badge
 @Composable
 private fun SecurityBadge(modifier: Modifier = Modifier) {
     Row(
@@ -801,7 +801,7 @@ private fun SecurityBadge(modifier: Modifier = Modifier) {
         Text(
             text = "Zero Server Uploads • Encrypted sandboxed memory",
             fontSize = 11.sp,
-            color = Color(0xFF4E5A69), // FIX: Hardcoded to bypass the private Tertiary token
+            color = Color(0xFF4E5A69),
             fontWeight = FontWeight.Normal
         )
     }
@@ -813,7 +813,7 @@ private fun MergeBottomBar(isMerging: Boolean, fileCount: Int, canMerge: Boolean
         modifier = Modifier
             .fillMaxWidth()
             .shadow(elevation = 16.dp, spotColor = Color.Black.copy(alpha = 0.06f))
-            .background(Surface.copy(alpha = 0.95f)) // FIX: Using Surface token for unified color
+            .background(Surface.copy(alpha = 0.95f))
             .navigationBarsPadding()
     ) {
         if (isMerging) {
