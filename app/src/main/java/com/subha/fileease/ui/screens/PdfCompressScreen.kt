@@ -228,6 +228,7 @@ fun PdfCompressScreen(onNavigateBack: () -> Unit) {
                                                 if (processBitmap.width > maxImageWidth) {
                                                     val scale = maxImageWidth.toFloat() / processBitmap.width
                                                     val newHeight = (processBitmap.height * scale).toInt()
+
                                                     processBitmap = Bitmap.createScaledBitmap(processBitmap, maxImageWidth, newHeight, true)
                                                 }
 
@@ -373,6 +374,7 @@ private fun CompressTopBar(onNavigateBack: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .background(Surface.copy(alpha = 0.95f))
+            .statusBarsPadding() // FIX: Safely pushes content below the system clock/battery
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -382,7 +384,13 @@ private fun CompressTopBar(onNavigateBack: () -> Unit) {
             contentAlignment = Alignment.Center
         ) { Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface) }
         Spacer(modifier = Modifier.width(12.dp))
-        Text("Pdf Compressor", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+        Text(
+            text = "Pdf Compressor",
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            color = OnSurface,
+            fontFamily = LocalTextStyle.current.fontFamily
+        )
     }
 }
 
