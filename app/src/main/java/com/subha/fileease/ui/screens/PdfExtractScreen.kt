@@ -72,7 +72,6 @@ import java.io.FileOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
-// Exact color tokens from the Stitch HTML Tailwind config
 private val Surface = Color(0xFFFAF8FF)
 private val SurfaceContainerLowest = Color(0xFFFFFFFF)
 private val SurfaceContainerLow = Color(0xFFF2F3FF)
@@ -91,7 +90,6 @@ private val OnErrorContainer = Color(0xFF93000A)
 private val Outline = Color(0xFF727687)
 private val OutlineVariant = Color(0xFFC2C6D8)
 
-// Upgraded Data class for actual PDF Thumbnails
 data class ExtractPage(
     val id: Int,
     var isSelected: Boolean,
@@ -106,26 +104,22 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Hardware & File State Management
     var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
     var fileName by remember { mutableStateOf("") }
     var fileSizeMb by remember { mutableDoubleStateOf(0.0) }
     var filePages by remember { mutableIntStateOf(0) }
     val hasFile = selectedFileUri != null
 
-    // State Management for inputs and toggles
     var isProcessing by remember { mutableStateOf(false) }
     var isParsing by remember { mutableStateOf(false) }
     var processingComplete by remember { mutableStateOf(false) }
     var extractionMode by remember { mutableStateOf("single") } // single, separate
     var deleteOriginal by remember { mutableStateOf(false) }
 
-    // Dynamic Grid State
     val pages = remember { mutableStateListOf<ExtractPage>() }
     val selectedCount = pages.count { it.isSelected }
     var rangeInput by remember { mutableStateOf(generateRangeString(pages)) }
 
-    // Phase 3: Document Picker & Thumbnail Extractor
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -152,7 +146,6 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                         val renderer = PdfRenderer(fd)
                         totalPages = renderer.pageCount
 
-                        // Limit rendering to 50 pages to prevent OOM errors on massive books
                         val renderLimit = minOf(totalPages, 50)
                         for (i in 0 until renderLimit) {
                             val page = renderer.openPage(i)
@@ -165,7 +158,6 @@ fun PdfExtractScreen(onNavigateBack: () -> Unit) {
                             page.close()
                         }
 
-                        // Fill remainder with empty thumbnails if PDF > 50 pages
                         for (i in renderLimit until totalPages) {
                             generatedPages.add(ExtractPage(id = i + 1, isSelected = false, thumbnail = null))
                         }
@@ -433,6 +425,7 @@ private fun ExtractTopBar(onNavigateBack: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .background(Surface.copy(alpha = 0.95f))
+            .statusBarsPadding() // FIX: Pushes TopBar safely below system icons
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -447,7 +440,13 @@ private fun ExtractTopBar(onNavigateBack: () -> Unit) {
             }
             Spacer(modifier = Modifier.width(4.dp))
             Column {
-                Text("Extract Pages", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+                Text(
+                    "Extract Pages",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = OnSurface,
+                    fontFamily = LocalTextStyle.current.fontFamily
+                )
             }
         }
     }
@@ -540,7 +539,6 @@ private fun SelectionControlsCard(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            // Added weight(1f) so this side yields horizontal space to the buttons if needed
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                 Text("Selection", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(modifier = Modifier.width(6.dp))
@@ -549,7 +547,6 @@ private fun SelectionControlsCard(
                 }
             }
             Spacer(modifier = Modifier.width(8.dp))
-            // Tightened the spacing between the action buttons
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 QuickActionBtn("All", onSelectAll)
                 QuickActionBtn("None", onSelectNone)
@@ -590,9 +587,8 @@ private fun QuickActionBtn(title: String, onClick: () -> Unit) {
             .clip(RoundedCornerShape(50))
             .background(SurfaceContainerLow)
             .clickable { onClick() }
-            .padding(horizontal = 10.dp, vertical = 6.dp) // Tightened horizontal padding
+            .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
-        // Enforced softWrap = false to completely prevent the text from breaking into two lines
         Text(title, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceVariant, maxLines = 1, softWrap = false)
     }
 }
