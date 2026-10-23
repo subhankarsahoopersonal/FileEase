@@ -769,9 +769,10 @@ private fun TextToPdfTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Surface.copy(alpha = 0.90f))
+            .background(Surface.copy(alpha = 0.95f))
+            .statusBarsPadding()
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .padding(horizontal = 16.dp, vertical = 16.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -780,8 +781,14 @@ private fun TextToPdfTopBar(onNavigateBack: () -> Unit) {
         ) {
             Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
-        Spacer(modifier = Modifier.width(4.dp))
-        Text("Text To PDF", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = "Text To PDF",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = OnSurface,
+            fontFamily = LocalTextStyle.current.fontFamily
+        )
     }
 }
 
@@ -889,8 +896,8 @@ private fun TextToPdfBottomBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Surface.copy(alpha = 0.90f))
-            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.06f))
+            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
+            .background(Surface.copy(alpha = 0.98f))
             .navigationBarsPadding()
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)) {
