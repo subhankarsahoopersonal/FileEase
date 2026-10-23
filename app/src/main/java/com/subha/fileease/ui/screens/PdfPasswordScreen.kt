@@ -56,7 +56,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-// Exact color tokens from the Stitch HTML Tailwind config
+// Exact color tokens
 private val Surface = Color(0xFFFAF8FF)
 private val SurfaceContainerLowest = Color(0xFFFFFFFF)
 private val SurfaceContainerLow = Color(0xFFF2F3FF)
@@ -83,14 +83,12 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Hardware & File State Management
     var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
     var fileName by remember { mutableStateOf("") }
     var fileSizeMb by remember { mutableDoubleStateOf(0.0) }
     var filePages by remember { mutableIntStateOf(0) }
     val hasFile = selectedFileUri != null
 
-    // State Management for inputs and toggles
     var openPassword by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var isOpenPasswordVisible by remember { mutableStateOf(false) }
@@ -105,7 +103,6 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
     var isProcessing by remember { mutableStateOf(false) }
     var isComplete by remember { mutableStateOf(false) }
 
-    // The Document Picker & Background Metadata Extraction
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -166,7 +163,6 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
                             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                             val outputFile = File(downloadsDir, "${cleanFileName}_secured_${System.currentTimeMillis()}.pdf")
 
-                            // PDFBox Cryptographic Engine
                             context.contentResolver.openInputStream(selectedFileUri!!)?.use { inputStream ->
                                 val document = PDDocument.load(inputStream, MemoryUsageSetting.setupMixed(50 * 1024 * 1024))
 
@@ -175,11 +171,10 @@ fun PdfPasswordScreen(onNavigateBack: () -> Unit) {
                                 ap.setCanExtractContent(allowCopying)
                                 ap.setCanModifyAnnotations(allowAnnotations)
 
-                                // If owner password is empty/disabled, fallback to the open password
                                 val actualOwnerPwd = if (isOwnerEnabled && ownerPassword.isNotBlank()) ownerPassword else openPassword
 
                                 val spp = StandardProtectionPolicy(actualOwnerPwd, openPassword, ap)
-                                spp.encryptionKeyLength = 256 // Enforce maximum AES-256 security
+                                spp.encryptionKeyLength = 256
 
                                 document.protect(spp)
                                 document.save(outputFile)
@@ -299,8 +294,8 @@ private fun PasswordTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            // Fixed: Changed from SurfaceContainerLowest to Surface to match containerColor
             .background(Surface.copy(alpha = 0.95f))
+            .statusBarsPadding() // FIX: Pushes TopBar safely below system icons
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -315,7 +310,13 @@ private fun PasswordTopBar(onNavigateBack: () -> Unit) {
             Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
         Spacer(modifier = Modifier.width(12.dp))
-        Text("Pdf Password", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+        Text(
+            text = "Pdf Password",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = OnSurface,
+            fontFamily = LocalTextStyle.current.fontFamily
+        )
     }
 }
 
@@ -610,7 +611,6 @@ private fun PasswordBottomBar(isProcessing: Boolean, isComplete: Boolean, hasFil
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            // Fixed: Changed from SurfaceContainerLowest to Surface to match containerColor
             .background(Surface.copy(alpha = 0.98f))
             .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
             .navigationBarsPadding()
