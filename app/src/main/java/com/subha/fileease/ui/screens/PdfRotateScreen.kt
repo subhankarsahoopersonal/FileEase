@@ -81,7 +81,6 @@ private val OutlineVariant = Color(0xFFC2C6D8)
 private val SurfaceVariant = Color(0xFFDAE2FD)
 private val OnTertiaryFixedVariant = Color(0xFF3B4856)
 
-// Data class updated for actual PDF Thumbnails
 data class RotatePage(
     val id: Int,
     var isSelected: Boolean,
@@ -97,14 +96,12 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // File State
     var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
     var fileName by remember { mutableStateOf("") }
     var fileSizeMb by remember { mutableDoubleStateOf(0.0) }
     var filePages by remember { mutableIntStateOf(0) }
     val pages = remember { mutableStateListOf<RotatePage>() }
 
-    // UI State
     var activeScope by remember { mutableStateOf("selected") }
     var isProcessing by remember { mutableStateOf(false) }
     var isParsing by remember { mutableStateOf(false) }
@@ -114,7 +111,6 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
     val modifiedCount = pages.count { it.rotation % 360 != 0 }
     val selectedCount = pages.count { it.isSelected }
 
-    // PDF Picker Launcher
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -125,7 +121,6 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                 var name = "Unknown.pdf"
                 var sizeBytes = 0L
 
-                // Get Metadata
                 context.contentResolver.query(it, null, null, null, null)?.use { cursor ->
                     val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                     val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
@@ -135,7 +130,6 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                     }
                 }
 
-                // Generate Thumbnails using Android Native PdfRenderer
                 val generatedPages = mutableListOf<RotatePage>()
                 try {
                     context.contentResolver.openFileDescriptor(it, "r")?.use { fd ->
@@ -143,7 +137,6 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                         val totalPages = renderer.pageCount
                         for (i in 0 until totalPages) {
                             val page = renderer.openPage(i)
-                            // Create a small, fast thumbnail canvas
                             val bitmap = Bitmap.createBitmap(240, 320, Bitmap.Config.ARGB_8888)
                             val canvas = Canvas(bitmap)
                             canvas.drawColor(android.graphics.Color.WHITE)
@@ -199,7 +192,6 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
             if (shouldRotate) {
                 var newRot = (page.rotation + degrees) % 360
                 if (newRot < 0) newRot += 360
-                // Trigger recomposition
                 pages[index] = page.copy(rotation = newRot)
             }
         }
@@ -225,7 +217,6 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                                 val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                                 val outputFile = File(downloadsDir, "${cleanFileName}_rotated_${System.currentTimeMillis()}.pdf")
 
-                                // PDFBox Rotation Engine
                                 context.contentResolver.openInputStream(selectedFileUri!!)?.use { inputStream ->
                                     val document = PDDocument.load(inputStream, MemoryUsageSetting.setupMixed(50 * 1024 * 1024))
 
@@ -233,7 +224,6 @@ fun PdfRotateScreen(onNavigateBack: () -> Unit) {
                                         val targetRotation = pages[i].rotation
                                         if (targetRotation != 0) {
                                             val pdPage = document.getPage(i)
-                                            // Add desired rotation to existing physical rotation
                                             val currentRot = pdPage.rotation
                                             pdPage.rotation = (currentRot + targetRotation) % 360
                                         }
@@ -378,6 +368,7 @@ private fun RotateTopBar(onNavigateBack: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .background(Surface.copy(alpha = 0.95f))
+            .statusBarsPadding() // FIX: Pushes TopBar safely below system icons
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -392,7 +383,13 @@ private fun RotateTopBar(onNavigateBack: () -> Unit) {
             Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
         Spacer(modifier = Modifier.width(12.dp))
-        Text("Rotate PDF", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+        Text(
+            text = "Rotate PDF",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = OnSurface,
+            fontFamily = LocalTextStyle.current.fontFamily
+        )
     }
 }
 
