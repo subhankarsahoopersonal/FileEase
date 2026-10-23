@@ -385,7 +385,7 @@ fun JpgToPngScreen(onNavigateBack: () -> Unit) {
                         Spacer(modifier = Modifier.width(16.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(loadedImage!!.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${loadedImage!!.dimensions} • ${"%.1f MB".format(loadedImage!!.sizeMb)} • RGB", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+                            Text("${loadedImage!!.dimensions} • ${"%.1f MB".format(loadedImage!!.sizeMb)} RGB", fontSize = 12.sp, color = OnSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
 
                             Row(modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -602,9 +602,10 @@ private fun JpgToPngTopBar(onNavigateBack: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Surface.copy(alpha = 0.90f))
+            .background(Surface.copy(alpha = 0.95f))
+            .statusBarsPadding()
             .shadow(elevation = 1.dp, spotColor = Color.Black.copy(alpha = 0.04f))
-            .padding(horizontal = 16.dp, vertical = 16.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -613,8 +614,14 @@ private fun JpgToPngTopBar(onNavigateBack: () -> Unit) {
         ) {
             Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = OnSurface)
         }
-        Spacer(modifier = Modifier.width(4.dp))
-        Text("JPG to PNG", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, letterSpacing = (-0.01).sp)
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = "JPG to PNG",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = OnSurface,
+            fontFamily = LocalTextStyle.current.fontFamily
+        )
     }
 }
 
@@ -638,17 +645,17 @@ private fun BitCompCard(modifier: Modifier, title: String, subtitle: String, isS
 
 @Composable
 private fun CustomSwitch(checked: Boolean, isEnabled: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    val bg by animateColorAsState(if (checked) PrimaryContainer else SurfaceContainerHigh, label = "switchBg")
-    val offset by animateDpAsState(if (checked) 20.dp else 0.dp, label = "switchOffset")
+    val bg by animateColorAsState(if (checked) PrimaryContainer else OutlineVariant, label = "switchBg")
+    val offset by animateDpAsState(if (checked) 16.dp else 0.dp, label = "switchOffset")
 
     Box(
         modifier = Modifier
-            .width(48.dp)
-            .height(28.dp)
+            .width(40.dp)
+            .height(24.dp)
             .clip(RoundedCornerShape(50))
             .background(bg.copy(alpha = if (isEnabled) 1f else 0.5f))
             .clickable(enabled = isEnabled) { onCheckedChange(!checked) }
-            .padding(4.dp),
+            .padding(2.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         Box(
@@ -680,8 +687,8 @@ private fun JpgToPngBottomBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceContainerLowest.copy(alpha = 0.95f))
-            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.06f))
+            .shadow(elevation = 24.dp, spotColor = OnSurface.copy(alpha = 0.1f))
+            .background(Surface.copy(alpha = 0.98f))
             .navigationBarsPadding()
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
