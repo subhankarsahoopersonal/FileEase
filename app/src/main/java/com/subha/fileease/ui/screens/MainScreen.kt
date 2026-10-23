@@ -20,14 +20,14 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoFixHigh
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.PictureAsPdf
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -48,12 +48,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 
-// Premium Dual-State Icon Setup
+// Premium Dual-State Icon Setup with Rounded aesthetics
 sealed class BottomNavItem(val route: String, val title: String, val selectedIcon: ImageVector, val unselectedIcon: ImageVector) {
-    object Home : BottomNavItem("home", "Home", Icons.Filled.Home, Icons.Outlined.Home)
-    object Files : BottomNavItem("files", "Files", Icons.Filled.Folder, Icons.Outlined.Folder)
-    object PdfTools : BottomNavItem("pdf_tools", "PDFs", Icons.Filled.PictureAsPdf, Icons.Outlined.PictureAsPdf)
-    object ImageTools : BottomNavItem("image_tools", "Studio", Icons.Filled.AutoFixHigh, Icons.Outlined.AutoFixHigh)
+    object Home : BottomNavItem("home", "Home", Icons.Rounded.Home, Icons.Outlined.Home)
+    object Files : BottomNavItem("files", "Files", Icons.Rounded.Folder, Icons.Outlined.Folder)
+    object PdfTools : BottomNavItem("pdf_tools", "PDFs", Icons.Rounded.PictureAsPdf, Icons.Outlined.PictureAsPdf)
+    object ImageTools : BottomNavItem("image_tools", "Studio", Icons.Rounded.GridView, Icons.Outlined.GridView)
 }
 
 fun Modifier.navBounceClick(onClick: () -> Unit): Modifier = composed {
@@ -258,14 +258,14 @@ fun FloatingBottomNavigationBar(navController: NavHostController) {
         modifier = Modifier
             .fillMaxWidth()
             .shadow(
-                elevation = 24.dp,
-                shape = RoundedCornerShape(28.dp),
-                spotColor = Color(0xFF0066FF).copy(alpha = 0.15f),
-                ambientColor = Color(0xFF0066FF).copy(alpha = 0.05f)
+                elevation = 20.dp,
+                shape = RoundedCornerShape(50),
+                spotColor = Color(0xFF0050CB).copy(alpha = 0.12f),
+                ambientColor = Color(0xFF0050CB).copy(alpha = 0.04f)
             )
-            .background(Color.White, RoundedCornerShape(28.dp))
-            .padding(horizontal = 8.dp, vertical = 8.dp)
-            .height(64.dp)
+            .background(Color.White, RoundedCornerShape(50))
+            .padding(8.dp)
+            .height(68.dp)
     ) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val tabWidth = maxWidth / items.size
@@ -284,8 +284,8 @@ fun FloatingBottomNavigationBar(navController: NavHostController) {
                     .offset(x = indicatorOffset)
                     .width(tabWidth)
                     .fillMaxHeight()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Color(0xFFEFF6FF))
+                    .clip(RoundedCornerShape(50))
+                    .background(Color(0xFFF2F6FF))
             )
 
             Row(
@@ -296,32 +296,25 @@ fun FloatingBottomNavigationBar(navController: NavHostController) {
                 items.forEach { item ->
                     val isSelected = currentRoute == item.route
 
-                    // Dynamic Dual-State Icon Assignment
                     val currentIcon = if (isSelected) item.selectedIcon else item.unselectedIcon
 
                     val contentColor by animateColorAsState(
-                        targetValue = if (isSelected) Color(0xFF0066FF) else Color(0xFF94A3B8),
+                        targetValue = if (isSelected) Color(0xFF2A55F5) else Color(0xFF424656),
                         animationSpec = tween(300),
                         label = "NavColorAnim"
                     )
 
                     val iconScale by animateFloatAsState(
-                        targetValue = if (isSelected) 1.25f else 1.0f,
+                        targetValue = if (isSelected) 1.1f else 1.0f,
                         animationSpec = spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium),
                         label = "IconScaleAnim"
-                    )
-
-                    val iconOffsetY by animateDpAsState(
-                        targetValue = if (isSelected) (-3).dp else 0.dp,
-                        animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMedium),
-                        label = "IconOffsetAnim"
                     )
 
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .clip(RoundedCornerShape(20.dp))
+                            .clip(RoundedCornerShape(50))
                             .navBounceClick {
                                 if (currentRoute != item.route) {
                                     navController.navigate(item.route) {
@@ -341,14 +334,13 @@ fun FloatingBottomNavigationBar(navController: NavHostController) {
                             contentDescription = item.title,
                             tint = contentColor,
                             modifier = Modifier
-                                .offset(y = iconOffsetY)
                                 .graphicsLayer {
                                     scaleX = iconScale
                                     scaleY = iconScale
                                 }
                                 .size(24.dp)
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = item.title,
                             fontSize = 11.sp,
